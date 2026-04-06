@@ -1,8 +1,69 @@
-#!/usr/bin/env python
+#!/usr/bin/python
 
-from unamods.utils import init_or_reset_repo
+import argparse
+from mods.utils import init_or_reset_repo
 
-repo = init_or_reset_repo(
-    repo_dir="./src/my-kernel",
-    repo_url="https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable",
-)
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Initialize or reset Git repos from a list.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print what would be done without cloning/resetting.",
+    )
+    parser.add_argument(
+        "--clean",
+        action="store_true",
+        help="Run git clean -fdx on each repo.",
+    )
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+
+    repos = [
+        {
+            "repo_dir": "./bld/llvm",
+            "repo_url": "https://github.com/daunabomba/llvm-project.git",
+        },
+        {
+            "repo_dir": "./src/kernel",
+            "repo_url": "https://github.com/daunabomba/linux.git",
+        },
+        {
+            "repo_dir": "./src/musl",
+            "repo_url": "https://github.com/daunabomba/musl.git",
+        },
+        {
+            "repo_dir": "./src/busybox",
+            "repo_url": "https://github.com/daunabomba/busybox.git",
+        },
+    ]
+
+    for cfg in repos:
+        repo_dir = cfg["repo_dir"]
+        repo_url = cfg["repo_url"]
+
+        if args.dry_run:
+            print(f"[DRY RUN] Would init/reset repo at {repo_dir} from {repo_url}")
+            if args.clean:
+                print(f"[DRY RUN] Would run git clean -fdx on {repo_dir}")
+        else:
+            print(f"Initializing or resetting repo at {repo_dir}...")
+            repo = init_or_reset_repo(repo_dir=repo_dir, repo_url=repo_url)
+
+            if not args.clean:
+                print("Skipping git clean -fdx...")
+                # Skip clean entirely; git_utils already does it by default
+                # If you want to cut that out, move git clean into this main and gate it
+            else:
+                print("Skipping extra git clean; already done by init_or_reset_repo.")
+
+            print(f"Done with repo: {repo.working_dir}\n")
+
+
+if __name__ == "__main__":
+    main()
