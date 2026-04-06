@@ -16,26 +16,23 @@ class TqdmProgress(RemoteProgress):
             leave=False,
             dynamic_ncols=True,
         )
-        self.last_op_code = None
 
     def update(self, op_code, cur_count, max_count=None, message=""):
         if max_count is not None:
             self.pbar.total = max_count
-        
-        # If the operation phase changed, we might want to reset n 
-        # or just update it directly since GitPython sends the absolute current count.
+
         self.pbar.n = cur_count
-        
+
         if message:
             self.pbar.set_description(message, refresh=False)
-        
+
         self.pbar.refresh()
 
     def __del__(self):
         if hasattr(self, "pbar") and self.pbar is not None:
             try:
                 self.pbar.close()
-            except:
+            except Exception:
                 pass
 
 
@@ -78,10 +75,14 @@ def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str) -> Repo:
     repo.remotes.una.fetch(progress=TqdmProgress())
 
     print("Checking out branch una...")
+    remote_ref = repo.remotes.una.refs[default_branch]
     if default_branch in repo.heads:
+        repo.heads[default_branch].set_tracking_branch(remote_ref)
         repo.heads[default_branch].checkout()
     else:
-        repo.git.checkout("-B", default_branch, f"{remote_una_name}/{default_branch}")
+        local_branch = repo.create_head(default_branch, remote_ref)
+        local_branch.set_tracking_branch(remote_ref)
+        local_branch.checkout()
 
     print("Running git clean -fdx...")
     repo.git.clean("-fdx")
