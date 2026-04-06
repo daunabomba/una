@@ -27,33 +27,38 @@ def main():
     repos = [
         {
             "repo_dir": "./bld/llvm",
-            "repo_url": "https://github.com/daunabomba/llvm-project.git",
+            "origin_url": "https://github.com/llvm/llvm-project.git",
+            "una_url": "git@github.com:daunabomba/llvm-project.git",
         },
         {
             "repo_dir": "./src/kernel",
-            "repo_url": "https://github.com/daunabomba/linux.git",
+            "origin_url": "https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable.git",
+            "una_url": "git@github.com:daunabomba/linux.git",
         },
         {
             "repo_dir": "./src/musl",
-            "repo_url": "https://github.com/daunabomba/musl.git",
+            "origin_url": "https://git.musl-libc.org/git/musl",
+            "una_url": "git@github.com:daunabomba/musl.git",
         },
         {
             "repo_dir": "./src/busybox",
-            "repo_url": "https://github.com/daunabomba/busybox.git",
+            "origin_url": "https://git.busybox.net/busybox",
+            "una_url": "git@github.com:daunabomba/busybox.git",
         },
     ]
 
     for cfg in repos:
         repo_dir = cfg["repo_dir"]
-        repo_url = cfg["repo_url"]
+        origin_url = cfg["origin_url"]
+        una_url = cfg["una_url"]
 
         if args.dry_run:
-            print(f"[DRY RUN] Would init/reset repo at {repo_dir} from {repo_url}")
+            print(f"[DRY RUN] Would init/reset repo at {repo_dir} from {origin_url}")
             if args.clean:
                 print(f"[DRY RUN] Would run git clean -fdx on {repo_dir}")
         else:
             print(f"Initializing or resetting repo at {repo_dir}...")
-            repo = init_or_reset_repo(repo_dir=repo_dir, repo_url=repo_url)
+            repo = init_or_reset_repo(repo_dir=repo_dir, origin_url=origin_url, una_url=una_url)
 
             if not args.clean:
                 print("Skipping git clean -fdx...")

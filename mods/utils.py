@@ -1,4 +1,5 @@
 from git import Repo, RemoteProgress
+import shutil
 import os
 from tqdm import tqdm
 
@@ -13,29 +14,29 @@ class TqdmProgress(RemoteProgress):
             desc="Git operation",
             unit="obj",
             leave=False,
-            ncols=-1,
+            dynamic_ncols=True,
         )
+        self.last_op_code = None
 
     def update(self, op_code, cur_count, max_count=None, message=""):
-        if max_count is None:
-            max_count = 1
-
+        if max_count is not None:
+            self.pbar.total = max_count
+        
+        # If the operation phase changed, we might want to reset n 
+        # or just update it directly since GitPython sends the absolute current count.
         self.pbar.n = cur_count
-        self.pbar.total = max_count
-        self.pbar.set_description(message or self.pbar.desc)
+        
+        if message:
+            self.pbar.set_description(message, refresh=False)
+        
         self.pbar.refresh()
 
-        if cur_count == max_count:
-            self.pbar.close()
-
     def __del__(self):
-        if not hasattr(self, "pbar"):
-            return
-        try:
-            if not self.pbar.disable:
+        if hasattr(self, "pbar") and self.pbar is not None:
+            try:
                 self.pbar.close()
-        except (AttributeError, RuntimeError):
-            pass
+            except:
+                pass
 
 
 def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str) -> Repo:
@@ -45,6 +46,9 @@ def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str) -> Repo:
     else:
         print(f"Repo exists at {repo_dir}; opening...")
         repo = Repo(repo_dir)
+
+    print("Configuring SSH key...")
+    repo.git.config("core.sshCommand", "ssh -i ~/.github.key -o IdentitiesOnly=yes")
 
     if "origin" not in [r.name for r in repo.remotes]:
         repo.create_remote("origin", origin_url)
@@ -56,17 +60,28 @@ def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str) -> Repo:
     else:
         repo.remotes[remote_una_name].set_url(una_url)
 
+    print("Setting fetch refspec for origin...")
+    repo.git.config("remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
+
+    print("Setting fetch refspec for una...")
+    repo.git.config(f"remote.{remote_una_name}.fetch", f"+refs/heads/*:refs/remotes/{remote_una_name}/*")
+
+    print("Cleaning up stale una refs...")
+    una_refs_path = os.path.join(repo.git_dir, f"refs/remotes/{remote_una_name}")
+    if os.path.exists(una_refs_path):
+        shutil.rmtree(una_refs_path, ignore_errors=True)
+
     print("Fetching latest changes from origin...")
     repo.remotes.origin.fetch(progress=TqdmProgress())
 
     print("Fetching latest changes from una...")
     repo.remotes.una.fetch(progress=TqdmProgress())
 
-    print("Checking out branch una from remote-tracking branch una/una...")
+    print("Checking out branch una...")
     if default_branch in repo.heads:
         repo.heads[default_branch].checkout()
     else:
-        repo.git.checkout("-b", default_branch, f"{remote_una_name}/{default_branch}")
+        repo.git.checkout("-B", default_branch, f"{remote_una_name}/{default_branch}")
 
     print("Running git clean -fdx...")
     repo.git.clean("-fdx")
