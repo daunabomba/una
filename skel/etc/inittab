@@ -1,0 +1,16 @@
+::sysinit:/usr/bin/mount -n -t proc proc /proc
+::sysinit:/usr/bin/mount -n -t sysfs sysfs /sys
+::sysinit:/usr/bin/mount -n -t devtmpfs -o noexec,noatime,nodiratime,nosuid,mode=0755,size=1M devtmpfs /dev
+::sysinit:/usr/bin/mount -n -o remount,noatime,nodiratime,nodev,ro /
+::sysinit:/usr/bin/mkdir -p /dev/pts
+::sysinit:/usr/bin/mount -n -t devpts -o noexec,noatime,nodiratime,nosuid,mode=620,gid=0,ptmxmode=0666 devpts /dev/pts
+::sysinit:/usr/bin/mount -n -t tmpfs -o noexec,noatime,nodiratime,nosuid,mode=1777,size=128M tmpfs /run
+::sysinit:/usr/bin/mount -n -t tmpfs -o noexec,noatime,nodiratime,nosuid,mode=1777,size=32M tmpfs /tmp
+::sysinit:/usr/bin/ln -sf /proc/self/fd /dev/fd
+::sysinit:/usr/bin/ln -sf /proc/self/fd/0 /dev/stdin
+::sysinit:/usr/bin/ln -sf /proc/self/fd/1 /dev/stdout
+::sysinit:/usr/bin/ln -sf /proc/self/fd/2 /dev/stderr
+::sysinit:/usr/bin/hostname xx
+::sysinit:/usr/sbin/mdev -s
+
+console::respawn:-/bin/sh
