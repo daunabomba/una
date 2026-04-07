@@ -2,6 +2,7 @@
 
 import argparse
 import shutil
+import os
 
 from mods.utils import init_or_reset_repo
 from pathlib import Path
@@ -9,9 +10,8 @@ from pathlib import Path
 bld_base = Path("./bld").absolute()
 
 host_install_dir = bld_base / "host"
-staging_build_dir = bld_base / "staging"
-target_build_dir = bld_base / "target"
-image_build_dir = bld_base / "image"
+staging_dir = bld_base / "staging"
+target_dir = bld_base / "target"
 
 import importlib.util
 import sys
@@ -106,9 +106,8 @@ def main():
     if args.init:
         shutil.rmtree(bld_base, ignore_errors=True)
         host_install_dir.mkdir(parents=True, exist_ok=True)
-        staging_build_dir.mkdir(parents=True, exist_ok=True)
-        target_build_dir.mkdir(parents=True, exist_ok=True)
-        image_build_dir.mkdir(parents=True, exist_ok=True)
+        staging_dir.mkdir(parents=True, exist_ok=True)
+        target_dir.mkdir(parents=True, exist_ok=True)
         for cfg in repos:
             repo_dir = cfg["repo_dir"]
             origin_url = cfg["origin_url"]
@@ -139,17 +138,20 @@ def main():
         musl_cfg = bld_base / "muslx32.cfg"
         print(f"Creating compiler configuration at {musl_cfg}...")
         cfg_content = f"""--target=x86_64-linux-muslx32
---sysroot={staging_build_dir}
+--sysroot={staging_dir}
 -fuse-ld=lld
 -nostdlib
-{staging_build_dir}/usr/lib/Scrt1.o
-{staging_build_dir}/usr/lib/crti.o
--L{staging_build_dir}/usr/lib
+{staging_dir}/usr/lib/Scrt1.o
+{staging_dir}/usr/lib/crti.o
+-L{staging_dir}/usr/lib
 -lc
-{staging_build_dir}/usr/lib/crtn.o
+{staging_dir}/usr/lib/crtn.o
 -fPIE
 """
         musl_cfg.write_text(cfg_content)
+        
+        # Set environment variable for child processes
+        os.environ["CFLAGS"] = f"--config={musl_cfg} -pipe -D_FILE_OFFSET_BITS=64"
 
         # Phase 1: Configure and Install headers for all targets
         print("Phase 1: Configuring and installing target headers.")
@@ -158,9 +160,9 @@ def main():
             module = load_repo_una(repo_dir)
             if module:
                 if hasattr(module, "target_configure"):
-                    module.target_configure(staging_build_dir, image_build_dir)
+                    module.target_configure(staging_dir, target_dir)
                 if hasattr(module, "target_headers_install"):
-                    module.target_headers_install(staging_build_dir, image_build_dir)
+                    module.target_headers_install(staging_dir, target_dir)
             
         # Phase 2: Build and install for all targets
         print("Phase 2: Building and installing target packages.")
@@ -169,9 +171,9 @@ def main():
             module = load_repo_una(repo_dir)
             if module:
                 if hasattr(module, "target_build"):
-                    module.target_build(staging_build_dir, image_build_dir)
+                    module.target_build(staging_dir, target_dir)
                 if hasattr(module, "target_install"):
-                    module.target_install(staging_build_dir, image_build_dir)
+                    module.target_install(staging_dir, target_dir)
     elif not args.list:
         print("No action specified. Use --init to initialize repos or --list to see them --build to build after calling --init.")
 
