@@ -108,6 +108,14 @@ def main():
         host_install_dir.mkdir(parents=True, exist_ok=True)
         staging_dir.mkdir(parents=True, exist_ok=True)
         target_dir.mkdir(parents=True, exist_ok=True)
+
+        skel_dir = Path("skel")
+        if skel_dir.exists():
+            print(f"Propagating skel contents to staging and target directories...")
+            shutil.copytree(skel_dir, staging_dir, symlinks=True, dirs_exist_ok=True)
+            shutil.copytree(skel_dir, target_dir, symlinks=True, dirs_exist_ok=True)
+        else:
+            print("Warning: skel directory not found. Skipping propagation.")
         for cfg in repos:
             repo_dir = cfg["repo_dir"]
             origin_url = cfg["origin_url"]
@@ -174,8 +182,6 @@ def main():
                     module.target_build(staging_dir, target_dir)
                 if hasattr(module, "target_install"):
                     module.target_install(staging_dir, target_dir)
-    elif not args.list:
-        print("No action specified. Use --init to initialize repos or --list to see them --build to build after calling --init.")
 
 if __name__ == "__main__":
     main()
