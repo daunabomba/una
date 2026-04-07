@@ -1,7 +1,37 @@
 #!/usr/bin/python
 
 import argparse
+import shutil
+
 from mods.utils import init_or_reset_repo
+from pathlib import Path
+
+bld_base = Path("./bld").absolute()
+
+host_install_dir = bld_base / "host"
+staging_build_dir = bld_base / "staging"
+target_build_dir = bld_base / "target"
+image_build_dir = bld_base / "image"
+
+import importlib.util
+import sys
+
+
+def load_repo_una(repo_dir: str):
+    """
+    Dynamically load the una.py file from the specified repo directory.
+    """
+    una_file = Path(repo_dir) / "una.py"
+    if not una_file.exists():
+        print(f"Warning: {una_file} not found. Skipping build for this repo.")
+        return None
+    
+    module_name = f"repo_una_{Path(repo_dir).name}"
+    spec = importlib.util.spec_from_file_location(module_name, una_file)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def list_repos(repos, target_type=None):
@@ -34,31 +64,37 @@ def main():
         choices=["host", "target", "all"],
         help="List repos of the specified type.",
     )
+    parser.add_argument(
+        "--build",
+        action="store_true",
+        help="Build it.",
+    )
+
     args = parser.parse_args()
 
     repos = [
         {
-            "repo_dir": "./bld/llvm",
+            "repo_dir": "./repo/llvm",
             "origin_url": "/mnt/work/bld/llvm-project.git",
             "una_url": "git@github.com:daunabomba/llvm-project.git",
             "type": "host",
         },
         {
-            "repo_dir": "./src/kernel",
-            "origin_url": "/mnt/work/bld/linux-stable.git",
-            "una_url": "git@github.com:daunabomba/linux.git",
-            "type": "target",
-        },
-        {
-            "repo_dir": "./src/musl",
+            "repo_dir": "./repo/musl",
             "origin_url": "https://git.musl-libc.org/git/musl",
             "una_url": "git@github.com:daunabomba/musl.git",
             "type": "target",
         },
         {
-            "repo_dir": "./src/busybox",
+            "repo_dir": "./repo/busybox",
             "origin_url": "https://git.busybox.net/busybox",
             "una_url": "git@github.com:daunabomba/busybox.git",
+            "type": "target",
+        },
+        {
+            "repo_dir": "./repo/kernel",
+            "origin_url": "/mnt/work/bld/linux-stable.git",
+            "una_url": "git@github.com:daunabomba/linux.git",
             "type": "target",
         },
     ]
@@ -68,6 +104,11 @@ def main():
         list_repos(repos, target_type)
 
     if args.init:
+        shutil.rmtree(bld_base, ignore_errors=True)
+        host_install_dir.mkdir(parents=True, exist_ok=True)
+        staging_build_dir.mkdir(parents=True, exist_ok=True)
+        target_build_dir.mkdir(parents=True, exist_ok=True)
+        image_build_dir.mkdir(parents=True, exist_ok=True)
         for cfg in repos:
             repo_dir = cfg["repo_dir"]
             origin_url = cfg["origin_url"]
@@ -79,9 +120,60 @@ def main():
                 print(f"Initializing or resetting repo at {repo_dir}...")
                 repo = init_or_reset_repo(repo_dir=repo_dir, origin_url=origin_url, una_url=una_url)
                 print(f"Done with repo: {repo.working_dir}\n")
-    elif not args.list:
-        print("No action specified. Use --init to initialize repos or --list to see them.")
 
+    if args.build:
+        print("Starting host build.")
+        host_repos = [r for r in repos if r["type"] == "host"]
+        for r in host_repos:
+            repo_dir = r["repo_dir"]
+            module = load_repo_una(repo_dir)
+            if module and hasattr(module, "host_configure"):
+                module.host_configure(host_install_dir)
+                module.host_build(host_install_dir)
+                module.host_install(host_install_dir)
+
+        print("\nStarting target build.")
+        target_repos = [r for r in repos if r["type"] == "target"]
+        
+        # Create compiler config file for target builds
+        musl_cfg = bld_base / "muslx32.cfg"
+        print(f"Creating compiler configuration at {musl_cfg}...")
+        cfg_content = f"""--target=x86_64-linux-muslx32
+--sysroot={staging_build_dir}
+-fuse-ld=lld
+-nostdlib
+{staging_build_dir}/usr/lib/Scrt1.o
+{staging_build_dir}/usr/lib/crti.o
+-L{staging_build_dir}/usr/lib
+-lc
+{staging_build_dir}/usr/lib/crtn.o
+-fPIE
+"""
+        musl_cfg.write_text(cfg_content)
+
+        # Phase 1: Configure and Install headers for all targets
+        print("Phase 1: Configuring and installing target headers.")
+        for r in target_repos:
+            repo_dir = r["repo_dir"]
+            module = load_repo_una(repo_dir)
+            if module:
+                if hasattr(module, "target_configure"):
+                    module.target_configure(staging_build_dir, image_build_dir)
+                if hasattr(module, "target_headers_install"):
+                    module.target_headers_install(staging_build_dir, image_build_dir)
+            
+        # Phase 2: Build and install for all targets
+        print("Phase 2: Building and installing target packages.")
+        for r in target_repos:
+            repo_dir = r["repo_dir"]
+            module = load_repo_una(repo_dir)
+            if module:
+                if hasattr(module, "target_build"):
+                    module.target_build(staging_build_dir, image_build_dir)
+                if hasattr(module, "target_install"):
+                    module.target_install(staging_build_dir, image_build_dir)
+    elif not args.list:
+        print("No action specified. Use --init to initialize repos or --list to see them --build to build after calling --init.")
 
 if __name__ == "__main__":
     main()
