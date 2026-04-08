@@ -1,6 +1,7 @@
 from git import Repo, RemoteProgress
 import shutil
 import os
+import sys
 from tqdm import tqdm
 
 default_branch = "una"
@@ -37,6 +38,7 @@ class TqdmProgress(RemoteProgress):
 
 
 def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str) -> Repo:
+    print(f"Initializing repo: {repo_dir}")
     if not os.path.exists(repo_dir):
         print(f"Cloning repo into {repo_dir}...")
         repo = Repo.clone_from(origin_url, repo_dir, progress=TqdmProgress())
@@ -75,7 +77,12 @@ def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str) -> Repo:
     repo.remotes.una.fetch(progress=TqdmProgress())
 
     print("Checking out branch una...")
-    remote_ref = repo.remotes.una.refs[default_branch]
+    try:
+        remote_ref = repo.remotes.una.refs[default_branch]
+    except (IndexError, AttributeError):
+        print(f"Error: Branch '{default_branch}' not found on remote '{remote_una_name}'.")
+        sys.exit(1)
+
     if default_branch in repo.heads:
         repo.heads[default_branch].set_tracking_branch(remote_ref)
         repo.heads[default_branch].checkout()
@@ -95,20 +102,12 @@ def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str) -> Repo:
 
 def rebase_and_push(repo: Repo, branch_name: str):
     print(f"Rebasing current branch upon {branch_name}...")
-    try:
-        repo.git.rebase(branch_name)
-    except Exception as e:
-        print(f"Rebase failed or nothing to rebase: {e}")
-        return
+    # These will raise exceptions on failure, which will stop the script
+    repo.git.rebase(branch_name)
 
     print("Creating automatic rebase commit...")
-    try:
-        repo.git.commit("--allow-empty", "-m", "rebase")
-    except Exception as e:
-        print(f"Commit failed: {e}")
+    # allow-empty to ensure we always have the 'rebase' marker if requested
+    repo.git.commit("--allow-empty", "-m", "rebase")
 
     print(f"Pushing rebased branch to {remote_una_name}...")
-    try:
-        repo.remotes[remote_una_name].push(repo.active_branch.name, force=True, progress=TqdmProgress())
-    except Exception as e:
-        print(f"Push failed: {e}")
+    repo.remotes[remote_una_name].push(repo.active_branch.name, force=True, progress=TqdmProgress())
