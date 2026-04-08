@@ -4,7 +4,7 @@ import argparse
 import shutil
 import os
 
-from mods.utils import init_or_reset_repo
+from mods.utils import init_or_reset_repo, rebase_and_push
 from pathlib import Path
 
 bld_base = Path("./bld").absolute()
@@ -69,6 +69,11 @@ def main():
         action="store_true",
         help="Build it.",
     )
+    parser.add_argument(
+        "--rebase",
+        metavar="BRANCH",
+        help="Rebase the 'una' branch onto the specified origin branch (e.g. origin/master) and push.",
+    )
 
     args = parser.parse_args()
 
@@ -102,6 +107,7 @@ def main():
     if args.list:
         target_type = None if args.list == "all" else args.list
         list_repos(repos, target_type)
+        return
 
     if args.init:
         shutil.rmtree(bld_base, ignore_errors=True)
@@ -127,6 +133,20 @@ def main():
                 print(f"Initializing or resetting repo at {repo_dir}...")
                 repo = init_or_reset_repo(repo_dir=repo_dir, origin_url=origin_url, una_url=una_url)
                 print(f"Done with repo: {repo.working_dir}\n")
+
+    if args.rebase:
+        print(f"Starting rebase process onto {args.rebase}...")
+        from git import Repo
+        for cfg in repos:
+            repo_dir = cfg["repo_dir"]
+            if not Path(repo_dir).exists():
+                print(f"Skipping rebase for {repo_dir} (directory not found).")
+                continue
+            
+            print(f"Processing rebase for {repo_dir}...")
+            repo = Repo(repo_dir)
+            rebase_and_push(repo, args.rebase)
+            print(f"Finished rebase for {repo_dir}\n")
 
     if args.build:
         print("Starting host build.")

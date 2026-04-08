@@ -91,3 +91,24 @@ def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str) -> Repo:
     repo.head.reset(index=True, working_tree=True)
 
     return repo
+
+
+def rebase_and_push(repo: Repo, branch_name: str):
+    print(f"Rebasing current branch upon {branch_name}...")
+    try:
+        repo.git.rebase(branch_name)
+    except Exception as e:
+        print(f"Rebase failed or nothing to rebase: {e}")
+        return
+
+    print("Creating automatic rebase commit...")
+    try:
+        repo.git.commit("--allow-empty", "-m", "rebase")
+    except Exception as e:
+        print(f"Commit failed: {e}")
+
+    print(f"Pushing rebased branch to {remote_una_name}...")
+    try:
+        repo.remotes[remote_una_name].push(repo.active_branch.name, force=True, progress=TqdmProgress())
+    except Exception as e:
+        print(f"Push failed: {e}")
