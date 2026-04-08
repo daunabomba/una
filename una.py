@@ -74,12 +74,6 @@ def main():
 
     repos = [
         {
-            "repo_dir": "./repo/llvm",
-            "origin_url": "/mnt/work/bld/llvm-project.git",
-            "una_url": "git@github.com:daunabomba/llvm-project.git",
-            "type": "host",
-        },
-        {
             "repo_dir": "./repo/musl",
             "origin_url": "https://git.musl-libc.org/git/musl",
             "una_url": "git@github.com:daunabomba/musl.git",
