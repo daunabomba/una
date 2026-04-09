@@ -17,16 +17,20 @@ import importlib.util
 import sys
 
 
-def load_repo_una(repo_dir: str):
+def load_repo_una(repo_dir: str, una_file_name: str = "una.py"):
     """
-    Dynamically load the una.py file from the specified repo directory.
+    Dynamically load the specified una file from the repo directory.
+    Defaults to 'una.py'.
     """
-    una_file = Path(repo_dir) / "una.py"
+    una_file = Path(repo_dir) / una_file_name
     if not una_file.exists():
-        print(f"Error: {una_file} not found. Build script is missing for this repository.")
+        print(f"Error: {una_file} not found. Build script is missing for this component.")
         sys.exit(1)
     
-    module_name = f"repo_una_{Path(repo_dir).name}"
+    # Create a unique module name based on repo name and script name
+    unique_id = f"{Path(repo_dir).name}_{una_file_name.replace('/', '_').replace('.', '_')}"
+    module_name = f"repo_una_{unique_id}"
+    
     spec = importlib.util.spec_from_file_location(module_name, una_file)
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
@@ -41,7 +45,8 @@ def list_repos(repos, target_type=None):
     """
     filtered = [r for r in repos if target_type is None or r.get("type") == target_type]
     for r in filtered:
-        print(f"[{r.get('type', 'unknown')}] {r['repo_dir']} (Upstream: {r.get('branch', 'master')})")
+        script_info = f" (Script: {r.get('una_file', 'una.py')})"
+        print(f"[{r.get('type', 'unknown')}] {r['repo_dir']}{script_info} (Upstream: {r.get('branch', 'master')})")
     return [r["repo_dir"] for r in filtered]
 
 
@@ -57,7 +62,7 @@ def main():
     parser.add_argument(
         "--init",
         metavar="BASE_URL",
-        help="Initialize or reinit repos with the specified 'una' base URL (e.g. git@github.com:user/ or /mnt/mirrors/).",
+        help="Initialize or reinit repos with the specified 'una' base URL.",
     )
     parser.add_argument(
         "--list",
@@ -77,15 +82,20 @@ def main():
 
     args = parser.parse_args()
 
+    # Configuration for components and repositories
+    # Note: Multiple components can share the same repo_dir
     repos_config = [
         {
+            "name": "llvm-project",
             "una_repo": "llvm-project.git",
             "repo_dir": "./repo/llvm",
+            "una_file": "una/host.py",  # Component-specific build logic
             "origin_url": "/mnt/work/bld/llvm-project.git",
             "type": "host",
             "branch": "main",
         },
         {
+            "name": "musl",
             "una_repo": "musl.git",
             "repo_dir": "./repo/musl",
             "origin_url": "https://git.musl-libc.org/git/musl",
@@ -93,6 +103,7 @@ def main():
             "branch": "master",
         },
         {
+            "name": "busybox",
             "una_repo": "busybox.git",
             "repo_dir": "./repo/busybox",
             "origin_url": "https://git.busybox.net/busybox",
@@ -100,6 +111,7 @@ def main():
             "branch": "master",
         },
         {
+            "name": "linux",
             "una_repo": "linux.git",
             "repo_dir": "./repo/kernel",
             "origin_url": "/mnt/work/bld/linux-stable.git",
@@ -109,7 +121,6 @@ def main():
     ]
 
     repos = []
-    # Base URL from --init
     una_base = args.init
     
     for r in repos_config:
@@ -139,26 +150,34 @@ def main():
             print(f"Propagating skel contents to staging and target directories...")
             shutil.copytree(skel_dir, staging_dir, symlinks=True, dirs_exist_ok=True)
             shutil.copytree(skel_dir, target_dir, symlinks=True, dirs_exist_ok=True)
-        else:
-            print("Warning: skel directory not found. Skipping propagation.")
-            
+        
+        # Track initialized directories to avoid redundant Git operations on monorepos
+        initialized_dirs = set()
         for cfg in repos:
             repo_dir = cfg["repo_dir"]
+            if repo_dir in initialized_dirs:
+                print(f"Skipping initialization for {repo_dir} (already initialized for another component).")
+                continue
+                
             origin_url = cfg["origin_url"]
             una_url = cfg["una_url"]
 
             if args.dry_run:
                 print(f"[DRY RUN] Would init/reset repo at {repo_dir} from {origin_url} (Una Remote: {una_url})")
             else:
-                repo = init_or_reset_repo(repo_dir=repo_dir, origin_url=origin_url, una_url=una_url)
-                print(f"Done with repo: {repo.working_dir}\n")
+                init_or_reset_repo(repo_dir=repo_dir, origin_url=origin_url, una_url=una_url)
+                print(f"Done with repo: {repo_dir}\n")
+            
+            initialized_dirs.add(repo_dir)
 
     if args.build:
         print("Starting host build.")
         host_repos = [r for r in repos if r["type"] == "host"]
         for r in host_repos:
             repo_dir = r["repo_dir"]
-            module = load_repo_una(repo_dir)
+            una_file = r.get("una_file", "una.py")
+            module = load_repo_una(repo_dir, una_file)
+            
             if hasattr(module, "host_configure"):
                 module.host_configure(host_install_dir)
             if hasattr(module, "host_build"):
@@ -184,25 +203,25 @@ def main():
 -fPIE
 """
         musl_cfg.write_text(cfg_content)
-        
-        # Set environment variable for child processes
         os.environ["CFLAGS"] = f"--config={musl_cfg} -pipe -D_FILE_OFFSET_BITS=64"
 
-        # Phase 1: Configure and Install headers for all targets
+        # Phase 1: Headers & Configuration
         print("Phase 1: Configuring and installing target headers.")
         for r in target_repos:
             repo_dir = r["repo_dir"]
-            module = load_repo_una(repo_dir)
+            una_file = r.get("una_file", "una.py")
+            module = load_repo_una(repo_dir, una_file)
             if hasattr(module, "target_configure"):
                 module.target_configure(staging_dir, target_dir)
             if hasattr(module, "target_headers_install"):
                 module.target_headers_install(staging_dir, target_dir)
             
-        # Phase 2: Build and install for all targets
+        # Phase 2: Full Build
         print("Phase 2: Building and installing target packages.")
         for r in target_repos:
             repo_dir = r["repo_dir"]
-            module = load_repo_una(repo_dir)
+            una_file = r.get("una_file", "una.py")
+            module = load_repo_una(repo_dir, una_file)
             if hasattr(module, "target_build"):
                 module.target_build(staging_dir, target_dir)
             if hasattr(module, "target_install"):
@@ -211,19 +230,23 @@ def main():
     if args.rebase:
         print(f"Starting rebase and push process for all repos...")
         from git import Repo
+        rebased_dirs = set()
         for cfg in repos:
             repo_dir = cfg["repo_dir"]
-            upstream_branch = cfg.get("branch", "master")
-            full_upstream = f"origin/{upstream_branch}"
-
+            if repo_dir in rebased_dirs:
+                continue
+                
             if not Path(repo_dir).exists():
                 print(f"Error: Directory {repo_dir} not found. Cannot rebase.")
                 sys.exit(1)
             
+            upstream_branch = cfg.get("branch", "master")
+            full_upstream = f"origin/{upstream_branch}"
+            
             print(f"Processing rebase for {repo_dir} onto {full_upstream}...")
             repo = Repo(repo_dir)
-            # These will correctly cause sys.exit(1) via unhandled exceptions from GitPython
             rebase_and_push(repo, full_upstream)
+            rebased_dirs.add(repo_dir)
             print(f"Finished rebase/push for {repo_dir}\n")
 
 
