@@ -46,8 +46,8 @@ def list_repos(repos, target_type=None):
     filtered = [r for r in repos if target_type is None or r.get("type") == target_type]
     for r in filtered:
         script_info = f" (Script: {r.get('una_file', 'una.py')})"
-        print(f"[{r.get('type', 'unknown')}] {r['repo_dir']}{script_info} (Upstream: {r.get('branch', 'master')})")
-    return [r["repo_dir"] for r in filtered]
+        print(f"[{r.get('type', 'unknown')}] {r['name']} -> {r['repo_dir']}{script_info}")
+    return [r["name"] for r in filtered]
 
 
 def main():
@@ -75,6 +75,11 @@ def main():
         help="Build it.",
     )
     parser.add_argument(
+        "--only",
+        metavar="NAME",
+        help="Restrict the build or rebase to a specific component by name.",
+    )
+    parser.add_argument(
         "--rebase",
         action="store_true",
         help="Rebase the local 'una' branch onto its configured upstream origin branch and push to una.",
@@ -83,13 +88,12 @@ def main():
     args = parser.parse_args()
 
     # Configuration for components and repositories
-    # Note: Multiple components can share the same repo_dir
     repos_config = [
         {
-            "name": "llvm-project",
+            "name": "llvm-host",
             "una_repo": "llvm-project.git",
             "repo_dir": "./repo/llvm",
-            "una_file": "una/host.py",  # Component-specific build logic
+            "una_file": "una/host.py",
             "origin_url": "/mnt/work/bld/llvm-project.git",
             "type": "host",
             "branch": "main",
@@ -101,6 +105,15 @@ def main():
             "origin_url": "https://git.musl-libc.org/git/musl",
             "type": "target",
             "branch": "master",
+        },
+        {
+            "name": "llvm-runtime",
+            "una_repo": "llvm-project.git",
+            "repo_dir": "./repo/llvm",
+            "una_file": "una/runtime.py",
+            "origin_url": "/mnt/work/bld/llvm-project.git",
+            "type": "target",
+            "branch": "main",
         },
         {
             "name": "busybox",
@@ -134,29 +147,40 @@ def main():
             config["una_url"] = "UNKNOWN_BASE" 
         repos.append(config)
 
+    # Filtering logic if --only is specified
+    if args.only:
+        repos = [r for r in repos if r["name"] == args.only]
+        if not repos:
+            print(f"Error: Component '{args.only}' not found in configuration.")
+            sys.exit(1)
+
     if args.list:
         target_type = None if args.list == "all" else args.list
         list_repos(repos, target_type)
         return
 
     if args.init:
-        shutil.rmtree(bld_base, ignore_errors=True)
-        host_install_dir.mkdir(parents=True, exist_ok=True)
-        staging_dir.mkdir(parents=True, exist_ok=True)
-        target_dir.mkdir(parents=True, exist_ok=True)
+        # Warning: full init cleans host/staging/target
+        # If --only is used with --init, we might not want to wipe everything?
+        # But for now, let's stick to standard behavior.
+        if not args.only:
+            shutil.rmtree(bld_base, ignore_errors=True)
+            host_install_dir.mkdir(parents=True, exist_ok=True)
+            staging_dir.mkdir(parents=True, exist_ok=True)
+            target_dir.mkdir(parents=True, exist_ok=True)
 
-        skel_dir = Path("skel")
-        if skel_dir.exists():
-            print(f"Propagating skel contents to staging and target directories...")
-            shutil.copytree(skel_dir, staging_dir, symlinks=True, dirs_exist_ok=True)
-            shutil.copytree(skel_dir, target_dir, symlinks=True, dirs_exist_ok=True)
-        
-        # Track initialized directories to avoid redundant Git operations on monorepos
+            skel_dir = Path("skel")
+            if skel_dir.exists():
+                print(f"Propagating skel contents to staging and target directories...")
+                shutil.copytree(skel_dir, staging_dir, symlinks=True, dirs_exist_ok=True)
+                shutil.copytree(skel_dir, target_dir, symlinks=True, dirs_exist_ok=True)
+            else:
+                print("Warning: skel directory not found. Skipping propagation.")
+            
         initialized_dirs = set()
         for cfg in repos:
             repo_dir = cfg["repo_dir"]
             if repo_dir in initialized_dirs:
-                print(f"Skipping initialization for {repo_dir} (already initialized for another component).")
                 continue
                 
             origin_url = cfg["origin_url"]
@@ -188,10 +212,11 @@ def main():
         print("\nStarting target build.")
         target_repos = [r for r in repos if r["type"] == "target"]
         
-        # Create compiler config file for target builds
-        musl_cfg = bld_base / "muslx32.cfg"
-        print(f"Creating compiler configuration at {musl_cfg}...")
-        cfg_content = f"""--target=x86_64-linux-muslx32
+        if target_repos:
+            musl_cfg = bld_base / "muslx32.cfg"
+            if not musl_cfg.exists():
+                print(f"Creating compiler configuration at {musl_cfg}...")
+                cfg_content = f"""--target=x86_64-linux-muslx32
 --sysroot={staging_dir}
 -fuse-ld=lld
 -nostdlib
@@ -202,30 +227,31 @@ def main():
 {staging_dir}/usr/lib/crtn.o
 -fPIE
 """
-        musl_cfg.write_text(cfg_content)
-        os.environ["CFLAGS"] = f"--config={musl_cfg} -pipe -D_FILE_OFFSET_BITS=64"
-
-        # Phase 1: Headers & Configuration
-        print("Phase 1: Configuring and installing target headers.")
-        for r in target_repos:
-            repo_dir = r["repo_dir"]
-            una_file = r.get("una_file", "una.py")
-            module = load_repo_una(repo_dir, una_file)
-            if hasattr(module, "target_configure"):
-                module.target_configure(staging_dir, target_dir)
-            if hasattr(module, "target_headers_install"):
-                module.target_headers_install(staging_dir, target_dir)
+                musl_cfg.write_text(cfg_content)
             
-        # Phase 2: Full Build
-        print("Phase 2: Building and installing target packages.")
-        for r in target_repos:
-            repo_dir = r["repo_dir"]
-            una_file = r.get("una_file", "una.py")
-            module = load_repo_una(repo_dir, una_file)
-            if hasattr(module, "target_build"):
-                module.target_build(staging_dir, target_dir)
-            if hasattr(module, "target_install"):
-                module.target_install(staging_dir, target_dir)
+            os.environ["CFLAGS"] = f"--config={musl_cfg} -pipe -D_FILE_OFFSET_BITS=64"
+
+            # Phase 1: Headers & Configuration
+            print("Phase 1: Configuring and installing target headers.")
+            for r in target_repos:
+                repo_dir = r["repo_dir"]
+                una_file = r.get("una_file", "una.py")
+                module = load_repo_una(repo_dir, una_file)
+                if hasattr(module, "target_configure"):
+                    module.target_configure(staging_dir, target_dir)
+                if hasattr(module, "target_headers_install"):
+                    module.target_headers_install(staging_dir, target_dir)
+                
+            # Phase 2: Full Build
+            print("Phase 2: Building and installing target packages.")
+            for r in target_repos:
+                repo_dir = r["repo_dir"]
+                una_file = r.get("una_file", "una.py")
+                module = load_repo_una(repo_dir, una_file)
+                if hasattr(module, "target_build"):
+                    module.target_build(staging_dir, target_dir)
+                if hasattr(module, "target_install"):
+                    module.target_install(staging_dir, target_dir)
 
     if args.rebase:
         print(f"Starting rebase and push process for all repos...")
