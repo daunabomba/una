@@ -220,12 +220,10 @@ def main():
 --sysroot={staging_dir}
 -fuse-ld=lld
 -nostdlib
-{staging_dir}/usr/lib/Scrt1.o
-{staging_dir}/usr/lib/crti.o
 -L{staging_dir}/usr/lib
 -lc
-{staging_dir}/usr/lib/crtn.o
 -fPIE
+-mx32
 """
                 musl_cfg.write_text(cfg_content)
             
