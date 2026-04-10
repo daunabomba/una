@@ -26,10 +26,11 @@ def load_repo_una(repo_dir: str, una_file_name: str = "una.py"):
     if not una_file.exists():
         print(f"Error: {una_file} not found. Build script is missing for this component.")
         sys.exit(1)
-
+    
+    # Create a unique module name based on repo name and script name
     unique_id = f"{Path(repo_dir).name}_{una_file_name.replace('/', '_').replace('.', '_')}"
     module_name = f"repo_una_{unique_id}"
-
+    
     spec = importlib.util.spec_from_file_location(module_name, una_file)
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
@@ -51,7 +52,7 @@ def list_repos(repos, target_type=None):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Initialize, build, list, or rebase Git repos from a list.",
+        description="Initialize or reset Git repos from a list.",
     )
     parser.add_argument(
         "--dry-run",
@@ -71,9 +72,8 @@ def main():
     parser.add_argument(
         "--build",
         nargs="?",
-        const="all",
-        metavar="NAME",
-        help="Build all components, or only the specified component if NAME is given.",
+        const="ALL",
+        help="Build all projects (if no argument) or a specific component by name.",
     )
     parser.add_argument(
         "--rebase",
@@ -83,6 +83,7 @@ def main():
 
     args = parser.parse_args()
 
+    # Configuration for components and repositories
     repos_config = [
         {
             "name": "llvm-host",
@@ -130,7 +131,7 @@ def main():
 
     repos = []
     una_base = args.init
-
+    
     for r in repos_config:
         config = r.copy()
         if una_base:
@@ -139,7 +140,7 @@ def main():
                 base += "/"
             config["una_url"] = f"{base}{r['una_repo']}"
         else:
-            config["una_url"] = "UNKNOWN_BASE"
+            config["una_url"] = "UNKNOWN_BASE" 
         repos.append(config)
 
     if args.list:
@@ -147,38 +148,26 @@ def main():
         list_repos(repos, target_type)
         return
 
-    build_target = None
-    if args.build and args.build != "all":
-        build_target = args.build
-
     if args.init:
-        if not args.build:
-            shutil.rmtree(bld_base, ignore_errors=True)
-            host_install_dir.mkdir(parents=True, exist_ok=True)
-            staging_dir.mkdir(parents=True, exist_ok=True)
-            target_dir.mkdir(parents=True, exist_ok=True)
+        shutil.rmtree(bld_base, ignore_errors=True)
+        host_install_dir.mkdir(parents=True, exist_ok=True)
+        staging_dir.mkdir(parents=True, exist_ok=True)
+        target_dir.mkdir(parents=True, exist_ok=True)
 
-            skel_dir = Path("skel")
-            if skel_dir.exists():
-                print(f"Propagating skel contents to staging and target directories...")
-                shutil.copytree(skel_dir, staging_dir, symlinks=True, dirs_exist_ok=True)
-                shutil.copytree(skel_dir, target_dir, symlinks=True, dirs_exist_ok=True)
-            else:
-                print("Warning: skel directory not found. Skipping propagation.")
-
+        skel_dir = Path("skel")
+        if skel_dir.exists():
+            print(f"Propagating skel contents to staging and target directories...")
+            shutil.copytree(skel_dir, staging_dir, symlinks=True, dirs_exist_ok=True)
+            shutil.copytree(skel_dir, target_dir, symlinks=True, dirs_exist_ok=True)
+        else:
+            print("Warning: skel directory not found. Skipping propagation.")
+            
         initialized_dirs = set()
-        init_repos = repos
-        if build_target:
-            init_repos = [r for r in repos if r["name"] == build_target]
-            if not init_repos:
-                print(f"Error: Component '{build_target}' not found in configuration.")
-                sys.exit(1)
-
-        for cfg in init_repos:
+        for cfg in repos:
             repo_dir = cfg["repo_dir"]
             if repo_dir in initialized_dirs:
                 continue
-
+                
             origin_url = cfg["origin_url"]
             una_url = cfg["una_url"]
 
@@ -187,24 +176,27 @@ def main():
             else:
                 init_or_reset_repo(repo_dir=repo_dir, origin_url=origin_url, una_url=una_url)
                 print(f"Done with repo: {repo_dir}\n")
-
+            
             initialized_dirs.add(repo_dir)
 
     if args.build:
+        # Determine build scope
         build_repos = repos
-        if build_target:
-            build_repos = [r for r in repos if r["name"] == build_target]
+        if args.build != "ALL":
+            build_repos = [r for r in repos if r["name"] == args.build]
             if not build_repos:
-                print(f"Error: Component '{build_target}' not found in configuration.")
+                print(f"Error: Component '{args.build}' not found in configuration.")
                 sys.exit(1)
+            print(f"Building single component: {args.build}")
+        else:
+            print("Building all components.")
 
-        print("Starting host build.")
         host_repos = [r for r in build_repos if r["type"] == "host"]
         for r in host_repos:
             repo_dir = r["repo_dir"]
             una_file = r.get("una_file", "una.py")
             module = load_repo_una(repo_dir, una_file)
-
+            
             if hasattr(module, "host_configure"):
                 module.host_configure(host_install_dir)
             if hasattr(module, "host_build"):
@@ -212,9 +204,7 @@ def main():
             if hasattr(module, "host_install"):
                 module.host_install(host_install_dir)
 
-        print("\nStarting target build.")
         target_repos = [r for r in build_repos if r["type"] == "target"]
-
         if target_repos:
             musl_cfg = bld_base / "muslx32.cfg"
             if not musl_cfg.exists():
@@ -229,24 +219,41 @@ def main():
 -mx32
 """
                 musl_cfg.write_text(cfg_content)
-
+            
             os.environ["CFLAGS"] = f"--config={musl_cfg} -pipe -D_FILE_OFFSET_BITS=64"
 
-            print("Phase 1: Configuring and installing target headers.")
+            # Phase 0: Core Headers (Always check these for all builds that include target repos)
+            base_projects = ["musl", "linux"]
+            print("Phase 0: Checking/Installing core system headers (musl and linux).")
+            # For a single-component build, we might still need these headers in staging.
+            # So we check the whole system configuration to find where they are.
+            all_target_repos = [r for r in repos if r["type"] == "target"]
+            for name in base_projects:
+                proj = next((r for r in all_target_repos if r["name"] == name), None)
+                if proj:
+                    module = load_repo_una(proj["repo_dir"], proj.get("una_file", "una.py"))
+                    # We always run this to ensure staging is ready
+                    if hasattr(module, "target_configure"):
+                        module.target_configure(staging_dir, target_dir)
+                    if hasattr(module, "target_headers_install"):
+                        module.target_headers_install(staging_dir, target_dir)
+
+            # Phase 1: Configuring and installing remaining target headers
+            print("Phase 1: Configuring and installing remaining target headers.")
             for r in target_repos:
-                repo_dir = r["repo_dir"]
-                una_file = r.get("una_file", "una.py")
-                module = load_repo_una(repo_dir, una_file)
+                if r["name"] in base_projects:
+                    continue 
+                
+                module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
                 if hasattr(module, "target_configure"):
                     module.target_configure(staging_dir, target_dir)
                 if hasattr(module, "target_headers_install"):
                     module.target_headers_install(staging_dir, target_dir)
-
+                
+            # Phase 2: Building and installing target packages
             print("Phase 2: Building and installing target packages.")
             for r in target_repos:
-                repo_dir = r["repo_dir"]
-                una_file = r.get("una_file", "una.py")
-                module = load_repo_una(repo_dir, una_file)
+                module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
                 if hasattr(module, "target_build"):
                     module.target_build(staging_dir, target_dir)
                 if hasattr(module, "target_install"):
@@ -260,14 +267,14 @@ def main():
             repo_dir = cfg["repo_dir"]
             if repo_dir in rebased_dirs:
                 continue
-
+                
             if not Path(repo_dir).exists():
                 print(f"Error: Directory {repo_dir} not found. Cannot rebase.")
                 sys.exit(1)
-
+            
             upstream_branch = cfg.get("branch", "master")
             full_upstream = f"origin/{upstream_branch}"
-
+            
             print(f"Processing rebase for {repo_dir} onto {full_upstream}...")
             repo = Repo(repo_dir)
             rebase_and_push(repo, full_upstream)
