@@ -89,10 +89,6 @@ def main():
         sys.exit(0)
 
     # Configuration for components and repositories
-    # Types: 
-    #   host: llvm-host
-    #   base: musl, llvm-runtime
-    #   other: busybox, mxmux, linux
     repos_config = [
         {
             "name": "llvm-host",
@@ -139,7 +135,7 @@ def main():
             "origin_url": "https://github.com/daunabomba/mxmux.git",
             "type": "other",
             "branch": "master",
-            "rebase": False, # Explicitly false as requested
+            "rebase": False,
         },
         {
             "name": "linux",
@@ -213,7 +209,6 @@ def main():
     if args.build:
         print("Starting build process.")
         
-        # 1. Host Build
         host_repos = [r for r in repos_to_process if r["type"] == "host"]
         if host_repos:
             print("\n--- Host Stage ---")
@@ -223,26 +218,31 @@ def main():
                 if hasattr(module, "host_build"): module.host_build(host_install_dir)
                 if hasattr(module, "host_install"): module.host_install(host_install_dir)
 
-        # 2. Base & Other Builds
         target_configs_to_build = [r for r in repos_to_process if r["type"] in ["base", "other"]]
         if target_configs_to_build:
             print("\n--- Target Stage ---")
             
-            # Setup compiler configs
             musl_cfg = bld_base / "muslx32.cfg"
             musl_cpp_cfg = bld_base / "muslc++x32.cfg"
-            if not musl_cfg.exists() or not musl_cpp_cfg.exists():
+            musl_static_cfg = bld_base / "muslx32_static.cfg"
+            
+            if not musl_cfg.exists() or not musl_cpp_cfg.exists() or not musl_static_cfg.exists():
                 print("Generating compiler configurations...")
+                # Pure C Config
                 musl_cfg.write_text(f"--target=x86_64-linux-muslx32\n--sysroot={staging_dir}\n-isystem {staging_dir}/usr/include\n-fuse-ld=lld\n-nostdlib\n-L{staging_dir}/usr/lib\n-lc\n-fPIE\n-mx32\n")
+                # C++ Config
                 musl_cpp_cfg.write_text(f"--target=x86_64-linux-muslx32\n--sysroot={staging_dir}\n-isystem {staging_dir}/usr/include/c++/v1\n-isystem {staging_dir}/usr/include\n-fuse-ld=lld\n-nostdlib\n-L{staging_dir}/usr/lib\n-lc++\n-lc++abi\n-lunwind\n-lc\n-fPIE\n-mx32\n")
+                # Static/Explicit CRT Config (Total Control)
+                lib_p = staging_dir / "usr" / "lib"
+                musl_static_cfg.write_text(f"--target=x86_64-linux-muslx32\n--sysroot={staging_dir}\n-isystem {staging_dir}/usr/include\n-fuse-ld=lld\n-nostdlib\n{lib_p}/Scrt1.o\n{lib_p}/crti.o\n-L{lib_p}\n-lc\n{lib_p}/crtn.o\n-fPIE\n-mx32\n")
 
             os.environ["CFLAGS"] = f"--config={musl_cfg} -pipe -D_FILE_OFFSET_BITS=64"
             os.environ["CXXFLAGS"] = f"--config={musl_cpp_cfg} -pipe -D_FILE_OFFSET_BITS=64"
+            os.environ["CFLAGS_STATIC"] = f"--config={musl_static_cfg} -pipe -D_FILE_OFFSET_BITS=64"
+            os.environ["CFLAGS_busybox"] = f"--config={musl_static_cfg} -pipe -D_FILE_OFFSET_BITS=64"
 
-            # Functional phases
             all_target_repos = [r for r in repos if r["type"] in ["base", "other"]]
 
-            # Headers Phase
             print("Target Phase 0: System Headers (musl & linux)")
             for name in ["musl", "linux"]:
                 proj = next((r for r in all_target_repos if r["name"] == name), None)
@@ -251,7 +251,6 @@ def main():
                     if hasattr(module, "target_configure"): module.target_configure(staging_dir, target_dir)
                     if hasattr(module, "target_headers_install"): module.target_headers_install(staging_dir, target_dir)
 
-            # Core Lib Phase
             print("Target Phase 1: Core Base Library (musl)")
             musl_proj = next((r for r in all_target_repos if r["name"] == "musl"), None)
             if musl_proj:
@@ -259,10 +258,9 @@ def main():
                 if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir)
                 if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir)
 
-            # Base Projects Phase (e.g., llvm-runtime)
             base_repos = [r for r in target_configs_to_build if r["type"] == "base" and r["name"] != "musl"]
             if base_repos:
-                print("Target Phase 2: Base Components (runtime libraries, etc.)")
+                print("Target Phase 2: Base Components")
                 for r in base_repos:
                     module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
                     if hasattr(module, "target_configure"): module.target_configure(staging_dir, target_dir)
@@ -270,10 +268,9 @@ def main():
                     if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir)
                     if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir)
 
-            # Other Projects Phase
             other_repos = [r for r in target_configs_to_build if r["type"] == "other" and r["name"] != "linux"]
             if other_repos:
-                print("Target Phase 3: Other Components (applications)")
+                print("Target Phase 3: Other Components")
                 for r in other_repos:
                     module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
                     if hasattr(module, "target_configure"): module.target_configure(staging_dir, target_dir)
@@ -281,28 +278,20 @@ def main():
                     if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir)
                     if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir)
 
-            # Final Kernel Phase (linux modules and image)
             linux_proj = next((r for r in target_configs_to_build if r["name"] == "linux"), None)
             if linux_proj:
-                print("Target Phase 4: Kernel Finalization (linux)")
+                print("Target Phase 4: Kernel Finalization")
                 module = load_repo_una(linux_proj["repo_dir"], linux_proj.get("una_file", "una.py"))
                 if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir)
                 if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir)
 
     if args.rebase:
-        print("Starting rebase and push process...")
         from git import Repo
         rebased_dirs = set()
         for cfg in repos_to_process:
-            repo_dir = cfg["repo_dir"]
-            # Check the new rebase boolean
-            if not cfg.get("rebase", False):
-                print(f"Skipping rebase for {cfg['name']} as per configuration.")
-                continue
-            if repo_dir in rebased_dirs: continue
-            print(f"Processing rebase for {repo_dir}...")
-            rebase_and_push(Repo(repo_dir), f"origin/{cfg.get('branch', 'master')}")
-            rebased_dirs.add(repo_dir)
+            if not cfg.get("rebase", False): continue
+            rebase_and_push(Repo(cfg["repo_dir"]), f"origin/{cfg.get('branch', 'master')}")
+            rebased_dirs.add(cfg["repo_dir"])
 
 
 if __name__ == "__main__":
