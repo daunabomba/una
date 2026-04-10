@@ -157,6 +157,14 @@ def main():
     else:
         repos_to_process = repos
 
+    # Check if repos exist before building or rebasing
+    if args.build or args.rebase:
+        missing = [r["name"] for r in repos_to_process if not Path(r["repo_dir"]).exists()]
+        if missing:
+            print(f"Warning: The following repository directories are missing: {', '.join(missing)}")
+            print("Please run with --init [BASE_URL] first to initialize the repositories.")
+            sys.exit(1)
+
     if args.list:
         target_type = None if args.list == "all" else args.list
         list_repos(repos, target_type)
