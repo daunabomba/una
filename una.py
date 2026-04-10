@@ -157,8 +157,8 @@ def main():
     else:
         repos_to_process = repos
 
-    # Check if repos exist before building or rebasing
-    if args.build or args.rebase:
+    # Check if repos exist before building or rebasing (unless we are also initializing them)
+    if (args.build or args.rebase) and not args.init:
         missing = [r["name"] for r in repos_to_process if not Path(r["repo_dir"]).exists()]
         if missing:
             print(f"Warning: The following repository directories are missing: {', '.join(missing)}")
