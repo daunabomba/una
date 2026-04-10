@@ -230,9 +230,9 @@ def main():
                 print("Generating compiler configurations...")
                 lld_path = host_install_dir / "bin" / "ld.lld"
                 # Pure C Config
-                musl_cfg.write_text(f"--target=x86_64-linux-muslx32\n--sysroot={staging_dir}\n-isystem {staging_dir}/usr/include\n-fuse-ld={lld_path}\n-nostdlib\n-L{staging_dir}/usr/lib\n-lc\n-fPIE\n-mx32\n")
+                musl_cfg.write_text(f"--target=x86_64-linux-muslx32\n--sysroot={staging_dir}\n-isystem {staging_dir}/usr/include\n-fuse-ld={lld_path}\n-nostdlib\n-L{staging_dir}/usr/lib\n-lc\nWl,-dynamic-linker,/usr/lib/ld-musl-x32.so.1\n-fPIE\n-mx32\n")
                 # C++ Config
-                musl_cpp_cfg.write_text(f"--target=x86_64-linux-muslx32\n--sysroot={staging_dir}\n-isystem {staging_dir}/usr/include/c++/v1\n-isystem {staging_dir}/usr/include\n--ld-path={lld_path}\n-nostdlib\n-L{staging_dir}/usr/lib\n-lc++\n-lc++abi\n-lunwind\n-lc\n-fPIE\n-mx32\n")
+                musl_cpp_cfg.write_text(f"--target=x86_64-linux-muslx32\n--sysroot={staging_dir}\n-isystem {staging_dir}/usr/include/c++/v1\n-isystem {staging_dir}/usr/include\n--ld-path={lld_path}\n-nostdlib\n-L{staging_dir}/usr/lib\n-lc++\n-lc++abi\n-lunwind\n-lc\nWl,-dynamic-linker,/usr/lib/ld-musl-x32.so.1\n-fPIE\n-mx32\n")
                 # Static/Explicit CRT Config (Total Control)
                 lib_p = staging_dir / "usr" / "lib"
                 musl_static_cfg.write_text(f"--target=x86_64-linux-muslx32\n--sysroot={staging_dir}\n-isystem {staging_dir}/usr/include\n-fuse-ld={lld_path}\n-nostdlib\n{lib_p}/Scrt1.o\n{lib_p}/crti.o\n-L{lib_p}\n-lc\n{lib_p}/crtn.o\n-Wl,-dynamic-linker,/usr/lib/ld-musl-x32.so.1\n-fPIE\n-mx32\n")
