@@ -46,7 +46,8 @@ def list_repos(repos, target_type=None):
     filtered = [r for r in repos if target_type is None or r.get("type") == target_type]
     for r in filtered:
         script_info = f" (Script: {r.get('una_file', 'una.py')})"
-        print(f"[{r.get('type', 'unknown')}] {r['name']} -> {r['repo_dir']}{script_info}")
+        rebase_info = " [Rebase: Yes]" if r.get("rebase", False) else " [Rebase: No]"
+        print(f"[{r.get('type', 'unknown')}] {r['name']} -> {r['repo_dir']}{script_info}{rebase_info}")
     return [r["name"] for r in filtered]
 
 
@@ -66,7 +67,7 @@ def main():
     )
     parser.add_argument(
         "--list",
-        choices=["host", "target", "all"],
+        choices=["host", "base", "other", "all"],
         help="List repos of the specified type.",
     )
     parser.add_argument(
@@ -88,6 +89,10 @@ def main():
         sys.exit(0)
 
     # Configuration for components and repositories
+    # Types: 
+    #   host: llvm-host
+    #   base: musl, llvm-runtime
+    #   other: busybox, mxmux, linux
     repos_config = [
         {
             "name": "llvm-host",
@@ -97,14 +102,16 @@ def main():
             "origin_url": "/mnt/work/bld/llvm-project.git",
             "type": "host",
             "branch": "main",
+            "rebase": True,
         },
         {
             "name": "musl",
             "una_repo": "musl.git",
             "repo_dir": "./repo/musl",
             "origin_url": "https://git.musl-libc.org/git/musl",
-            "type": "target",
+            "type": "base",
             "branch": "master",
+            "rebase": True,
         },
         {
             "name": "llvm-runtime",
@@ -112,32 +119,36 @@ def main():
             "repo_dir": "./repo/llvm",
             "una_file": "una/runtime.py",
             "origin_url": "/mnt/work/bld/llvm-project.git",
-            "type": "target",
+            "type": "base",
             "branch": "main",
+            "rebase": True,
         },
         {
             "name": "busybox",
             "una_repo": "busybox.git",
             "repo_dir": "./repo/busybox",
             "origin_url": "https://git.busybox.net/busybox",
-            "type": "target",
+            "type": "other",
             "branch": "master",
+            "rebase": True,
         },
         {
             "name": "mxmux",
             "una_repo": "mxmux.git",
             "repo_dir": "./repo/mxmux",
             "origin_url": "https://github.com/daunabomba/mxmux.git",
-            "type": "target",
+            "type": "other",
             "branch": "master",
+            "rebase": False, # Explicitly false as requested
         },
         {
             "name": "linux",
             "una_repo": "linux.git",
             "repo_dir": "./repo/kernel",
             "origin_url": "/mnt/work/bld/linux-stable.git",
-            "type": "target",
+            "type": "other",
             "branch": "master",
+            "rebase": True,
         },
     ]
 
@@ -179,7 +190,6 @@ def main():
         return
 
     if args.init:
-        # Full wipe only on non-specific init
         if args.build == "ALL" or not args.build:
             shutil.rmtree(bld_base, ignore_errors=True)
             host_install_dir.mkdir(parents=True, exist_ok=True)
@@ -201,97 +211,94 @@ def main():
             initialized_dirs.add(repo_dir)
 
     if args.build:
-        print("Starting host build.")
+        print("Starting build process.")
+        
+        # 1. Host Build
         host_repos = [r for r in repos_to_process if r["type"] == "host"]
-        for r in host_repos:
-            module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
-            if hasattr(module, "host_configure"): module.host_configure(host_install_dir)
-            if hasattr(module, "host_build"): module.host_build(host_install_dir)
-            if hasattr(module, "host_install"): module.host_install(host_install_dir)
+        if host_repos:
+            print("\n--- Host Stage ---")
+            for r in host_repos:
+                module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
+                if hasattr(module, "host_configure"): module.host_configure(host_install_dir)
+                if hasattr(module, "host_build"): module.host_build(host_install_dir)
+                if hasattr(module, "host_install"): module.host_install(host_install_dir)
 
-        print("\nStarting target build.")
-        target_repos = [r for r in repos_to_process if r["type"] == "target"]
-        all_targets = [r for r in repos if r["type"] == "target"]
-
-        if target_repos:
-            # 1. Create Pure C Config
-            musl_cfg = bld_base / "muslx32.cfg"
-            if not musl_cfg.exists():
-                print(f"Creating C compiler configuration at {musl_cfg}...")
-                cfg_content = f"""--target=x86_64-linux-muslx32
---sysroot={staging_dir}
--isystem {staging_dir}/usr/include
--fuse-ld=lld
--nostdlib
--L{staging_dir}/usr/lib
--lc
--fPIE
--mx32
-"""
-                musl_cfg.write_text(cfg_content)
-
-            # 2. Create C++ Config
-            musl_cpp_cfg = bld_base / "muslc++x32.cfg"
-            if not musl_cpp_cfg.exists():
-                print(f"Creating C++ compiler configuration at {musl_cpp_cfg}...")
-                cpp_cfg_content = f"""--target=x86_64-linux-muslx32
---sysroot={staging_dir}
--isystem {staging_dir}/usr/include/c++/v1
--isystem {staging_dir}/usr/include
--fuse-ld=lld
--nostdlib
--L{staging_dir}/usr/lib
--lc++
--lc++abi
--lunwind
--lc
--fPIE
--mx32
-"""
-                musl_cpp_cfg.write_text(cpp_cfg_content)
+        # 2. Base & Other Builds
+        target_configs_to_build = [r for r in repos_to_process if r["type"] in ["base", "other"]]
+        if target_configs_to_build:
+            print("\n--- Target Stage ---")
             
+            # Setup compiler configs
+            musl_cfg = bld_base / "muslx32.cfg"
+            musl_cpp_cfg = bld_base / "muslc++x32.cfg"
+            if not musl_cfg.exists() or not musl_cpp_cfg.exists():
+                print("Generating compiler configurations...")
+                musl_cfg.write_text(f"--target=x86_64-linux-muslx32\n--sysroot={staging_dir}\n-isystem {staging_dir}/usr/include\n-fuse-ld=lld\n-nostdlib\n-L{staging_dir}/usr/lib\n-lc\n-fPIE\n-mx32\n")
+                musl_cpp_cfg.write_text(f"--target=x86_64-linux-muslx32\n--sysroot={staging_dir}\n-isystem {staging_dir}/usr/include/c++/v1\n-isystem {staging_dir}/usr/include\n-fuse-ld=lld\n-nostdlib\n-L{staging_dir}/usr/lib\n-lc++\n-lc++abi\n-lunwind\n-lc\n-fPIE\n-mx32\n")
+
             os.environ["CFLAGS"] = f"--config={musl_cfg} -pipe -D_FILE_OFFSET_BITS=64"
             os.environ["CXXFLAGS"] = f"--config={musl_cpp_cfg} -pipe -D_FILE_OFFSET_BITS=64"
 
-            # Phase 0: Core Setup
-            print("Phase 0: Core Headers (musl & linux).")
+            # Functional phases
+            all_target_repos = [r for r in repos if r["type"] in ["base", "other"]]
+
+            # Headers Phase
+            print("Target Phase 0: System Headers (musl & linux)")
             for name in ["musl", "linux"]:
-                proj = next((r for r in all_targets if r["name"] == name), None)
+                proj = next((r for r in all_target_repos if r["name"] == name), None)
                 if proj:
                     module = load_repo_una(proj["repo_dir"], proj.get("una_file", "una.py"))
                     if hasattr(module, "target_configure"): module.target_configure(staging_dir, target_dir)
                     if hasattr(module, "target_headers_install"): module.target_headers_install(staging_dir, target_dir)
 
-            # Phase 1: Build Musl
-            print("Phase 1: Building C Library (musl).")
-            musl_proj = next((r for r in all_targets if r["name"] == "musl"), None)
+            # Core Lib Phase
+            print("Target Phase 1: Core Base Library (musl)")
+            musl_proj = next((r for r in all_target_repos if r["name"] == "musl"), None)
             if musl_proj:
                 module = load_repo_una(musl_proj["repo_dir"], musl_proj.get("una_file", "una.py"))
                 if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir)
                 if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir)
 
-            # Phase 2: Configure the rest
-            print("Phase 2: Configuring projects.")
-            for r in target_repos:
-                if r["name"] == "musl": continue
-                module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
-                if hasattr(module, "target_configure"): module.target_configure(staging_dir, target_dir)
-                if hasattr(module, "target_headers_install"): module.target_headers_install(staging_dir, target_dir)
+            # Base Projects Phase (e.g., llvm-runtime)
+            base_repos = [r for r in target_configs_to_build if r["type"] == "base" and r["name"] != "musl"]
+            if base_repos:
+                print("Target Phase 2: Base Components (runtime libraries, etc.)")
+                for r in base_repos:
+                    module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
+                    if hasattr(module, "target_configure"): module.target_configure(staging_dir, target_dir)
+                    if hasattr(module, "target_headers_install"): module.target_headers_install(staging_dir, target_dir)
+                    if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir)
+                    if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir)
 
-            # Phase 3: Build & Install the rest
-            print("Phase 3: Final builds.")
-            for r in target_repos:
-                if r["name"] == "musl": continue
-                module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
+            # Other Projects Phase
+            other_repos = [r for r in target_configs_to_build if r["type"] == "other" and r["name"] != "linux"]
+            if other_repos:
+                print("Target Phase 3: Other Components (applications)")
+                for r in other_repos:
+                    module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
+                    if hasattr(module, "target_configure"): module.target_configure(staging_dir, target_dir)
+                    if hasattr(module, "target_headers_install"): module.target_headers_install(staging_dir, target_dir)
+                    if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir)
+                    if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir)
+
+            # Final Kernel Phase (linux modules and image)
+            linux_proj = next((r for r in target_configs_to_build if r["name"] == "linux"), None)
+            if linux_proj:
+                print("Target Phase 4: Kernel Finalization (linux)")
+                module = load_repo_una(linux_proj["repo_dir"], linux_proj.get("una_file", "una.py"))
                 if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir)
                 if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir)
 
     if args.rebase:
-        print("Starting rebase and push process for targeted repos...")
+        print("Starting rebase and push process...")
         from git import Repo
         rebased_dirs = set()
         for cfg in repos_to_process:
             repo_dir = cfg["repo_dir"]
+            # Check the new rebase boolean
+            if not cfg.get("rebase", False):
+                print(f"Skipping rebase for {cfg['name']} as per configuration.")
+                continue
             if repo_dir in rebased_dirs: continue
             print(f"Processing rebase for {repo_dir}...")
             rebase_and_push(Repo(repo_dir), f"origin/{cfg.get('branch', 'master')}")
