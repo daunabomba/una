@@ -124,6 +124,14 @@ def main():
             "branch": "master",
         },
         {
+            "name": "mxmux",
+            "una_repo": "mxmux.git",
+            "repo_dir": "./repo/mxmux",
+            "origin_url": "https://github.com/daunabomba/mxmux.git",
+            "type": "target",
+            "branch": "master",
+        },
+        {
             "name": "linux",
             "una_repo": "linux.git",
             "repo_dir": "./repo/kernel",
@@ -206,11 +214,13 @@ def main():
         all_targets = [r for r in repos if r["type"] == "target"]
 
         if target_repos:
+            # 1. Create Pure C Config
             musl_cfg = bld_base / "muslx32.cfg"
             if not musl_cfg.exists():
-                print(f"Creating compiler configuration at {musl_cfg}...")
+                print(f"Creating C compiler configuration at {musl_cfg}...")
                 cfg_content = f"""--target=x86_64-linux-muslx32
 --sysroot={staging_dir}
+-isystem {staging_dir}/usr/include
 -fuse-ld=lld
 -nostdlib
 -L{staging_dir}/usr/lib
@@ -219,9 +229,31 @@ def main():
 -mx32
 """
                 musl_cfg.write_text(cfg_content)
-            os.environ["CFLAGS"] = f"--config={musl_cfg} -pipe -D_FILE_OFFSET_BITS=64"
 
-            # Phase 0: Core Setup (Always check for basic headers)
+            # 2. Create C++ Config
+            musl_cpp_cfg = bld_base / "muslc++x32.cfg"
+            if not musl_cpp_cfg.exists():
+                print(f"Creating C++ compiler configuration at {musl_cpp_cfg}...")
+                cpp_cfg_content = f"""--target=x86_64-linux-muslx32
+--sysroot={staging_dir}
+-isystem {staging_dir}/usr/include/c++/v1
+-isystem {staging_dir}/usr/include
+-fuse-ld=lld
+-nostdlib
+-L{staging_dir}/usr/lib
+-lc++
+-lc++abi
+-lunwind
+-lc
+-fPIE
+-mx32
+"""
+                musl_cpp_cfg.write_text(cpp_cfg_content)
+            
+            os.environ["CFLAGS"] = f"--config={musl_cfg} -pipe -D_FILE_OFFSET_BITS=64"
+            os.environ["CXXFLAGS"] = f"--config={musl_cpp_cfg} -pipe -D_FILE_OFFSET_BITS=64"
+
+            # Phase 0: Core Setup
             print("Phase 0: Core Headers (musl & linux).")
             for name in ["musl", "linux"]:
                 proj = next((r for r in all_targets if r["name"] == name), None)
@@ -230,7 +262,7 @@ def main():
                     if hasattr(module, "target_configure"): module.target_configure(staging_dir, target_dir)
                     if hasattr(module, "target_headers_install"): module.target_headers_install(staging_dir, target_dir)
 
-            # Phase 1: Build Musl (required for project configuration checks)
+            # Phase 1: Build Musl
             print("Phase 1: Building C Library (musl).")
             musl_proj = next((r for r in all_targets if r["name"] == "musl"), None)
             if musl_proj:
