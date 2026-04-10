@@ -138,6 +138,15 @@ def main():
             "rebase": False,
         },
         {
+            "name": "wireguard-tools",
+            "una_repo": "wireguard-tools.git",
+            "repo_dir": "./repo/wireguard-tools",
+            "origin_url": "https://git.zx2c4.com/wireguard-tools",
+            "type": "other",
+            "branch": "master",
+            "rebase": True,
+        },
+        {
             "name": "linux",
             "una_repo": "linux.git",
             "repo_dir": "./repo/kernel",
