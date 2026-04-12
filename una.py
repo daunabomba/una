@@ -100,6 +100,12 @@ def main():
         action="store_true",
         help="Rebase the local 'una' branch onto its configured upstream origin branch and push to una.",
     )
+    parser.add_argument(
+        "--arch",
+        choices=["x32", "amd64"],
+        default="x32",
+        help="Target architecture (default: x32)",
+    )
 
     args = parser.parse_args()
 
@@ -260,21 +266,31 @@ def main():
 
         target_configs_to_build = [r for r in repos_to_process if r["type"] in ["base", "other"]]
         if target_configs_to_build:
-            print("\n--- Target Stage ---")
+            print(f"\n--- Target Stage ({args.arch}) ---")
             
-            musl_cfg = bld_base / "muslx32.cfg"
-            musl_cpp_cfg = bld_base / "muslc++x32.cfg"
-            musl_static_cfg = bld_base / "muslx32_static.cfg"
+            arch = args.arch
+            if arch == "x32":
+                target_triple = "x86_64-linux-muslx32"
+                march = "-mx32"
+                ld_musl = "/usr/lib/ld-musl-x32.so.1"
+            else:
+                target_triple = "x86_64-linux-musl"
+                march = "-m64"
+                ld_musl = "/usr/lib/ld-musl-x86_64.so.1"
+
+            musl_cfg = bld_base / f"musl_{arch}.cfg"
+            musl_cpp_cfg = bld_base / f"muslc++_{arch}.cfg"
+            musl_static_cfg = bld_base / f"musl_{arch}_static.cfg"
             
             if not musl_cfg.exists() or not musl_cpp_cfg.exists() or not musl_static_cfg.exists():
-                print("Generating compiler configurations...")
+                print(f"Generating compiler configurations for {arch}...")
                 lld_path = host_install_dir / "bin" / "ld.lld"
                 lib_p = staging_dir / "usr" / "lib"
                 # Pure C Config
-                musl_cfg.write_text(f"--target=x86_64-linux-muslx32\n--sysroot={staging_dir}\n-isystem {staging_dir}/usr/include\n-fuse-ld={lld_path}\n-nostdlib\n-L{staging_dir}/usr/lib\n-lc\n-Wl,-dynamic-linker,/usr/lib/ld-musl-x32.so.1\n-fPIE\n-mx32\n")
+                musl_cfg.write_text(f"--target={target_triple}\n--sysroot={staging_dir}\n-isystem {staging_dir}/usr/include\n-fuse-ld={lld_path}\n-nostdlib\n-L{staging_dir}/usr/lib\n-lc\n-Wl,-dynamic-linker,{ld_musl}\n-fPIE\n{march}\n")
                 # C++ Config
-                musl_cpp_cfg.write_text(f"--target=x86_64-linux-muslx32\n--sysroot={staging_dir}\n-isystem {staging_dir}/usr/include/c++/v1\n-isystem {staging_dir}/usr/include\n--ld-path={lld_path}\n-nostdlib\n{lib_p}/Scrt1.o\n{lib_p}/crti.o\n-L{lib_p}\n-lc++\n-lc++abi\n-lunwind\n-lc\n{lib_p}/crtn.o\n-Wl,-dynamic-linker,/usr/lib/ld-musl-x32.so.1\n-fPIE\n-mx32\n")
-                musl_static_cfg.write_text(f"--target=x86_64-linux-muslx32\n--sysroot={staging_dir}\n-isystem {staging_dir}/usr/include\n-fuse-ld={lld_path}\n-nostdlib\n{lib_p}/Scrt1.o\n{lib_p}/crti.o\n-L{lib_p}\n-lc\n{lib_p}/crtn.o\n-Wl,-dynamic-linker,/usr/lib/ld-musl-x32.so.1\n-fPIE\n-mx32\n")
+                musl_cpp_cfg.write_text(f"--target={target_triple}\n--sysroot={staging_dir}\n-isystem {staging_dir}/usr/include/c++/v1\n-isystem {staging_dir}/usr/include\n--ld-path={lld_path}\n-nostdlib\n{lib_p}/Scrt1.o\n{lib_p}/crti.o\n-L{lib_p}\n-lc++\n-lc++abi\n-lunwind\n-lc\n{lib_p}/crtn.o\n-Wl,-dynamic-linker,{ld_musl}\n-fPIE\n{march}\n")
+                musl_static_cfg.write_text(f"--target={target_triple}\n--sysroot={staging_dir}\n-isystem {staging_dir}/usr/include\n-fuse-ld={lld_path}\n-nostdlib\n{lib_p}/Scrt1.o\n{lib_p}/crti.o\n-L{lib_p}\n-lc\n{lib_p}/crtn.o\n-Wl,-dynamic-linker,{ld_musl}\n-fPIE\n{march}\n")
 
             os.environ["CFLAGS"] = f"--config={musl_cfg} -pipe -D_FILE_OFFSET_BITS=64"
             os.environ["CXXFLAGS"] = f"--config={musl_cpp_cfg} -pipe -D_FILE_OFFSET_BITS=64"
@@ -287,35 +303,35 @@ def main():
                 proj = next((r for r in all_target_repos if r["name"] == name), None)
                 if proj:
                     module = load_repo_una(proj["repo_dir"], proj.get("una_file", "una.py"))
-                    if hasattr(module, "target_configure"): module.target_configure(staging_dir, target_dir)
-                    if hasattr(module, "target_headers_install"): module.target_headers_install(staging_dir, target_dir)
+                    if hasattr(module, "target_configure"): module.target_configure(staging_dir, target_dir, arch=args.arch)
+                    if hasattr(module, "target_headers_install"): module.target_headers_install(staging_dir, target_dir, arch=args.arch)
 
             print("Target Phase 1: Core Base Library (musl)")
             musl_proj = next((r for r in all_target_repos if r["name"] == "musl"), None)
             if musl_proj:
                 module = load_repo_una(musl_proj["repo_dir"], musl_proj.get("una_file", "una.py"))
-                if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir)
-                if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir)
+                if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir, arch=args.arch)
+                if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir, arch=args.arch)
 
             base_repos = [r for r in target_configs_to_build if r["type"] == "base" and r["name"] != "musl"]
             if base_repos:
                 print("Target Phase 2: Base Components")
                 for r in base_repos:
                     module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
-                    if hasattr(module, "target_configure"): module.target_configure(staging_dir, target_dir)
-                    if hasattr(module, "target_headers_install"): module.target_headers_install(staging_dir, target_dir)
-                    if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir)
-                    if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir)
+                    if hasattr(module, "target_configure"): module.target_configure(staging_dir, target_dir, arch=args.arch)
+                    if hasattr(module, "target_headers_install"): module.target_headers_install(staging_dir, target_dir, arch=args.arch)
+                    if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir, arch=args.arch)
+                    if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir, arch=args.arch)
 
             other_repos = [r for r in target_configs_to_build if r["type"] == "other" and r["name"] != "linux"]
             if other_repos:
                 print("Target Phase 3: Other Components")
                 for r in other_repos:
                     module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
-                    if hasattr(module, "target_configure"): module.target_configure(staging_dir, target_dir)
-                    if hasattr(module, "target_headers_install"): module.target_headers_install(staging_dir, target_dir)
-                    if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir)
-                    if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir)
+                    if hasattr(module, "target_configure"): module.target_configure(staging_dir, target_dir, arch=args.arch)
+                    if hasattr(module, "target_headers_install"): module.target_headers_install(staging_dir, target_dir, arch=args.arch)
+                    if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir, arch=args.arch)
+                    if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir, arch=args.arch)
 
             # Ensure skel/etc overrides anything installed by components before kernel packing
             skel_etc = skel_dir / "etc"
@@ -330,8 +346,8 @@ def main():
             if linux_proj:
                 print("Target Phase 4: Kernel Finalization")
                 module = load_repo_una(linux_proj["repo_dir"], linux_proj.get("una_file", "una.py"))
-                if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir)
-                if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir)
+                if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir, arch=args.arch)
+                if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir, arch=args.arch)
 
     if args.rebase:
         from git import Repo
