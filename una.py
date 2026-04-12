@@ -51,6 +51,21 @@ def list_repos(repos, target_type=None):
     return [r["name"] for r in filtered]
 
 
+def get_git_remote_base():
+    """
+    Attempts to determine the base URL of the current git repository's remote.
+    """
+    try:
+        from git import Repo
+        repo = Repo(Path(__file__).parent, search_parent_directories=True)
+        url = repo.remotes.origin.url
+        if "/" in url:
+            return url.rsplit("/", 1)[0]
+    except Exception:
+        pass
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Initialize or reset Git repos from a list.",
@@ -60,10 +75,13 @@ def main():
         action="store_true",
         help="Print what would be done without cloning/resetting.",
     )
+    git_base = get_git_remote_base()
     parser.add_argument(
         "--init",
+        nargs="?",
+        const=git_base or "DETECT_FAILED",
         metavar="BASE_URL",
-        help="Initialize or reinit repos with the specified 'una' base URL.",
+        help=f"Initialize or reinit repos with the specified 'una' base URL. Defaults to the current repository's remote base ({git_base}) if not specified.",
     )
     parser.add_argument(
         "--list",
@@ -83,6 +101,10 @@ def main():
     )
 
     args = parser.parse_args()
+
+    if args.init == "DETECT_FAILED":
+        print("Error: --init was used without a BASE_URL, and no git remote origin was detected.")
+        sys.exit(1)
 
     if len(sys.argv) == 1:
         parser.print_help()
