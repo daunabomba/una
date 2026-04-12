@@ -8,10 +8,6 @@ from mods.utils import init_or_reset_repo, rebase_and_push
 from pathlib import Path
 
 bld_base = Path("./bld").absolute()
-
-host_install_dir = bld_base / "host"
-staging_dir = bld_base / "staging"
-target_dir = bld_base / "target"
 skel_dir = Path("./skel").absolute()
 
 import importlib.util
@@ -108,6 +104,12 @@ def main():
     )
 
     args = parser.parse_args()
+    
+    arch = args.arch
+    host_install_dir = bld_base / "host"
+    arch_bld_dir = bld_base / arch
+    staging_dir = arch_bld_dir / "staging"
+    target_dir = arch_bld_dir / "target"
 
     if args.init == "DETECT_FAILED":
         print("Error: --init was used without a BASE_URL, and no git remote origin was detected.")
@@ -234,13 +236,15 @@ def main():
 
     if args.init:
         if args.build == "ALL" or not args.build:
-            shutil.rmtree(bld_base, ignore_errors=True)
+            # We don't wipe everything, only the current arch's target directories
+            # Host tools are kept unless specifically requested or first build
+            shutil.rmtree(arch_bld_dir, ignore_errors=True)
             host_install_dir.mkdir(parents=True, exist_ok=True)
             staging_dir.mkdir(parents=True, exist_ok=True)
             target_dir.mkdir(parents=True, exist_ok=True)
-
+ 
             if skel_dir.exists():
-                print(f"Propagating skel contents to staging and target directories...")
+                print(f"Propagating skel contents to {arch} staging and target directories...")
                 shutil.copytree(skel_dir, staging_dir, symlinks=True, dirs_exist_ok=True)
                 shutil.copytree(skel_dir, target_dir, symlinks=True, dirs_exist_ok=True)
             
@@ -278,9 +282,9 @@ def main():
                 march = "-m64"
                 ld_musl = "/usr/lib/ld-musl-x86_64.so.1"
 
-            musl_cfg = bld_base / f"musl_{arch}.cfg"
-            musl_cpp_cfg = bld_base / f"muslc++_{arch}.cfg"
-            musl_static_cfg = bld_base / f"musl_{arch}_static.cfg"
+            musl_cfg = arch_bld_dir / "musl.cfg"
+            musl_cpp_cfg = arch_bld_dir / "muslc++.cfg"
+            musl_static_cfg = arch_bld_dir / "musl_static.cfg"
             
             if not musl_cfg.exists() or not musl_cpp_cfg.exists() or not musl_static_cfg.exists():
                 print(f"Generating compiler configurations for {arch}...")
