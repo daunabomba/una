@@ -98,18 +98,14 @@ def main():
     )
     parser.add_argument(
         "--arch",
-        choices=["x32", "x86_64"],
         default="x32",
-        help="Target architecture (default: x32)",
+        help="Target architecture(s), comma-separated (e.g., x32,x86_64). Default: x32",
     )
 
     args = parser.parse_args()
     
-    arch = args.arch
+    arches = [a.strip() for a in args.arch.split(",")]
     host_install_dir = bld_base / "host"
-    arch_bld_dir = bld_base / arch
-    staging_dir = arch_bld_dir / "staging"
-    target_dir = arch_bld_dir / "target"
 
     if args.init == "DETECT_FAILED":
         print("Error: --init was used without a BASE_URL, and no git remote origin was detected.")
@@ -235,18 +231,22 @@ def main():
         return
 
     if args.init:
-        if args.build == "ALL" or not args.build:
-            # We don't wipe everything, only the current arch's target directories
-            # Host tools are kept unless specifically requested or first build
-            shutil.rmtree(arch_bld_dir, ignore_errors=True)
-            host_install_dir.mkdir(parents=True, exist_ok=True)
-            staging_dir.mkdir(parents=True, exist_ok=True)
-            target_dir.mkdir(parents=True, exist_ok=True)
- 
-            if skel_dir.exists():
-                print(f"Propagating skel contents to {arch} staging and target directories...")
-                shutil.copytree(skel_dir, staging_dir, symlinks=True, dirs_exist_ok=True)
-                shutil.copytree(skel_dir, target_dir, symlinks=True, dirs_exist_ok=True)
+        for arch in arches:
+            arch_bld_dir = bld_base / arch
+            staging_dir = arch_bld_dir / "staging"
+            target_dir = arch_bld_dir / "target"
+
+            if args.build == "ALL" or not args.build:
+                print(f"Initializing build directories for {arch}...")
+                shutil.rmtree(arch_bld_dir, ignore_errors=True)
+                host_install_dir.mkdir(parents=True, exist_ok=True)
+                staging_dir.mkdir(parents=True, exist_ok=True)
+                target_dir.mkdir(parents=True, exist_ok=True)
+    
+                if skel_dir.exists():
+                    print(f"Propagating skel contents to {arch} staging and target directories...")
+                    shutil.copytree(skel_dir, staging_dir, symlinks=True, dirs_exist_ok=True)
+                    shutil.copytree(skel_dir, target_dir, symlinks=True, dirs_exist_ok=True)
             
         initialized_dirs = set()
         for cfg in repos_to_process:
@@ -268,11 +268,12 @@ def main():
                 if hasattr(module, "host_build"): module.host_build(host_install_dir)
                 if hasattr(module, "host_install"): module.host_install(host_install_dir)
 
-        target_configs_to_build = [r for r in repos_to_process if r["type"] in ["base", "other"]]
-        if target_configs_to_build:
-            print(f"\n--- Target Stage ({args.arch}) ---")
-            
-            arch = args.arch
+        for arch in arches:
+            print(f"\n====== Target Stage: {arch} ======")
+            arch_bld_dir = bld_base / arch
+            staging_dir = arch_bld_dir / "staging"
+            target_dir = arch_bld_dir / "target"
+
             if arch == "x32":
                 target_triple = "x86_64-linux-muslx32"
                 march = "-mx32"
@@ -302,45 +303,45 @@ def main():
 
             all_target_repos = [r for r in repos if r["type"] in ["base", "other"]]
 
-            print("Target Phase 0: System Headers (musl & linux)")
+            print(f"[{arch}] Target Phase 0: System Headers (musl & linux)")
             for name in ["musl", "linux"]:
                 proj = next((r for r in all_target_repos if r["name"] == name), None)
                 if proj:
                     module = load_repo_una(proj["repo_dir"], proj.get("una_file", "una.py"))
-                    if hasattr(module, "target_configure"): module.target_configure(staging_dir, target_dir, arch=args.arch)
-                    if hasattr(module, "target_headers_install"): module.target_headers_install(staging_dir, target_dir, arch=args.arch)
+                    if hasattr(module, "target_configure"): module.target_configure(staging_dir, target_dir, arch=arch)
+                    if hasattr(module, "target_headers_install"): module.target_headers_install(staging_dir, target_dir, arch=arch)
 
-            print("Target Phase 1: Core Base Library (musl)")
+            print(f"[{arch}] Target Phase 1: Core Base Library (musl)")
             musl_proj = next((r for r in all_target_repos if r["name"] == "musl"), None)
             if musl_proj:
                 module = load_repo_una(musl_proj["repo_dir"], musl_proj.get("una_file", "una.py"))
-                if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir, arch=args.arch)
-                if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir, arch=args.arch)
+                if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir, arch=arch)
+                if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir, arch=arch)
 
             base_repos = [r for r in target_configs_to_build if r["type"] == "base" and r["name"] != "musl"]
             if base_repos:
-                print("Target Phase 2: Base Components")
+                print(f"[{arch}] Target Phase 2: Base Components")
                 for r in base_repos:
                     module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
-                    if hasattr(module, "target_configure"): module.target_configure(staging_dir, target_dir, arch=args.arch)
-                    if hasattr(module, "target_headers_install"): module.target_headers_install(staging_dir, target_dir, arch=args.arch)
-                    if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir, arch=args.arch)
-                    if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir, arch=args.arch)
+                    if hasattr(module, "target_configure"): module.target_configure(staging_dir, target_dir, arch=arch)
+                    if hasattr(module, "target_headers_install"): module.target_headers_install(staging_dir, target_dir, arch=arch)
+                    if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir, arch=arch)
+                    if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir, arch=arch)
 
             other_repos = [r for r in target_configs_to_build if r["type"] == "other" and r["name"] != "linux"]
             if other_repos:
-                print("Target Phase 3: Other Components")
+                print(f"[{arch}] Target Phase 3: Other Components")
                 for r in other_repos:
                     module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
-                    if hasattr(module, "target_configure"): module.target_configure(staging_dir, target_dir, arch=args.arch)
-                    if hasattr(module, "target_headers_install"): module.target_headers_install(staging_dir, target_dir, arch=args.arch)
-                    if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir, arch=args.arch)
-                    if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir, arch=args.arch)
+                    if hasattr(module, "target_configure"): module.target_configure(staging_dir, target_dir, arch=arch)
+                    if hasattr(module, "target_headers_install"): module.target_headers_install(staging_dir, target_dir, arch=arch)
+                    if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir, arch=arch)
+                    if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir, arch=arch)
 
             # Ensure skel/etc overrides anything installed by components before kernel packing
             skel_etc = skel_dir / "etc"
             if skel_etc.exists():
-                print("Finalizing: Replacing /etc with skel/etc before kernel build...")
+                print(f"[{arch}] Finalizing: Replacing /etc with skel/etc before kernel build...")
                 shutil.rmtree(staging_dir / "etc", ignore_errors=True)
                 shutil.rmtree(target_dir / "etc", ignore_errors=True)
                 shutil.copytree(skel_etc, staging_dir / "etc", symlinks=True)
@@ -348,10 +349,10 @@ def main():
 
             linux_proj = next((r for r in target_configs_to_build if r["name"] == "linux"), None)
             if linux_proj:
-                print("Target Phase 4: Kernel Finalization")
+                print(f"[{arch}] Target Phase 4: Kernel Finalization")
                 module = load_repo_una(linux_proj["repo_dir"], linux_proj.get("una_file", "una.py"))
-                if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir, arch=args.arch)
-                if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir, arch=args.arch)
+                if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir, arch=arch)
+                if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir, arch=arch)
 
     if args.rebase:
         from git import Repo
