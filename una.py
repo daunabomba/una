@@ -102,7 +102,7 @@ def main():
     )
     parser.add_argument(
         "--arch",
-        choices=["x32", "amd64"],
+        choices=["x32", "x86_64"],
         default="x32",
         help="Target architecture (default: x32)",
     )
