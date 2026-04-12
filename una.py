@@ -39,6 +39,24 @@ def load_repo_una(repo_dir: str, una_file_name: str = "una.py"):
     return module
 
 
+def overlay_etc(src: Path, dst: Path):
+    """
+    Recursively overlays contents of src onto dst, overwriting existing files
+    and symlinks. This avoids shutil.copytree errors when entries already exist.
+    """
+    if not src.exists():
+        return
+    dst.mkdir(parents=True, exist_ok=True)
+    for item in src.iterdir():
+        target = dst / item.name
+        if item.is_dir():
+            overlay_etc(item, target)
+        else:
+            if target.exists() or target.is_symlink():
+                target.unlink()
+            shutil.copy2(item, target, follow_symlinks=False)
+
+
 def list_repos(repos, target_type=None):
     """
     Helper function to filter and print repo directories by type.
@@ -328,8 +346,8 @@ def main():
             skel_etc = skel_dir / "etc"
             if skel_etc.exists():
                 print("Finalizing: Re-applying skel/etc overrides to staging and target...")
-                shutil.copytree(skel_etc, staging_dir / "etc", symlinks=True, dirs_exist_ok=True)
-                shutil.copytree(skel_etc, target_dir / "etc", symlinks=True, dirs_exist_ok=True)
+                overlay_etc(skel_etc, staging_dir / "etc")
+                overlay_etc(skel_etc, target_dir / "etc")
 
     if args.rebase:
         from git import Repo
