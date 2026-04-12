@@ -12,6 +12,7 @@ bld_base = Path("./bld").absolute()
 host_install_dir = bld_base / "host"
 staging_dir = bld_base / "staging"
 target_dir = bld_base / "target"
+skel_dir = Path("./skel").absolute()
 
 import importlib.util
 import sys
@@ -232,7 +233,6 @@ def main():
             staging_dir.mkdir(parents=True, exist_ok=True)
             target_dir.mkdir(parents=True, exist_ok=True)
 
-            skel_dir = Path("skel")
             if skel_dir.exists():
                 print(f"Propagating skel contents to staging and target directories...")
                 shutil.copytree(skel_dir, staging_dir, symlinks=True, dirs_exist_ok=True)
@@ -323,6 +323,13 @@ def main():
                 module = load_repo_una(linux_proj["repo_dir"], linux_proj.get("una_file", "una.py"))
                 if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir)
                 if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir)
+
+            # Ensure skel/etc overrides anything installed by components
+            skel_etc = skel_dir / "etc"
+            if skel_etc.exists():
+                print("Finalizing: Re-applying skel/etc overrides to staging and target...")
+                shutil.copytree(skel_etc, staging_dir / "etc", symlinks=True, dirs_exist_ok=True)
+                shutil.copytree(skel_etc, target_dir / "etc", symlinks=True, dirs_exist_ok=True)
 
     if args.rebase:
         from git import Repo
