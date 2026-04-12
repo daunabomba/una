@@ -39,24 +39,6 @@ def load_repo_una(repo_dir: str, una_file_name: str = "una.py"):
     return module
 
 
-def overlay_etc(src: Path, dst: Path):
-    """
-    Recursively overlays contents of src onto dst, overwriting existing files
-    and symlinks. This avoids shutil.copytree errors when entries already exist.
-    """
-    if not src.exists():
-        return
-    dst.mkdir(parents=True, exist_ok=True)
-    for item in src.iterdir():
-        target = dst / item.name
-        if item.is_dir():
-            overlay_etc(item, target)
-        else:
-            if target.exists() or target.is_symlink():
-                target.unlink()
-            shutil.copy2(item, target, follow_symlinks=False)
-
-
 def list_repos(repos, target_type=None):
     """
     Helper function to filter and print repo directories by type.
@@ -335,19 +317,21 @@ def main():
                     if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir)
                     if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir)
 
+            # Ensure skel/etc overrides anything installed by components before kernel packing
+            skel_etc = skel_dir / "etc"
+            if skel_etc.exists():
+                print("Finalizing: Replacing /etc with skel/etc before kernel build...")
+                shutil.rmtree(staging_dir / "etc", ignore_errors=True)
+                shutil.rmtree(target_dir / "etc", ignore_errors=True)
+                shutil.copytree(skel_etc, staging_dir / "etc", symlinks=True)
+                shutil.copytree(skel_etc, target_dir / "etc", symlinks=True)
+
             linux_proj = next((r for r in target_configs_to_build if r["name"] == "linux"), None)
             if linux_proj:
                 print("Target Phase 4: Kernel Finalization")
                 module = load_repo_una(linux_proj["repo_dir"], linux_proj.get("una_file", "una.py"))
                 if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir)
                 if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir)
-
-            # Ensure skel/etc overrides anything installed by components
-            skel_etc = skel_dir / "etc"
-            if skel_etc.exists():
-                print("Finalizing: Re-applying skel/etc overrides to staging and target...")
-                overlay_etc(skel_etc, staging_dir / "etc")
-                overlay_etc(skel_etc, target_dir / "etc")
 
     if args.rebase:
         from git import Repo
