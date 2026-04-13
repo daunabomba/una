@@ -268,6 +268,7 @@ def main():
                 if hasattr(module, "host_build"): module.host_build(host_install_dir)
                 if hasattr(module, "host_install"): module.host_install(host_install_dir)
 
+        target_configs_to_build = [r for r in repos_to_process if r["type"] in ["base", "other"]]
         for arch in arches:
             print(f"\n====== Target Stage: {arch} ======")
             arch_bld_dir = bld_base / arch
