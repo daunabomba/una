@@ -111,3 +111,42 @@ def rebase_and_push(repo: Repo, branch_name: str):
 
     print(f"Pushing rebased branch to {remote_una_name}...")
     repo.remotes[remote_una_name].push(repo.active_branch.name, force=True, progress=TqdmProgress())
+
+
+def get_target_triple(arch: str) -> str:
+    if arch == "x32":
+        return "x86_64-linux-muslx32"
+    elif arch == "x86_64":
+        return "x86_64-linux-musl"
+    elif arch == "aarch64":
+        return "aarch64-linux-musl"
+    elif arch == "riscv64":
+        return "riscv64-linux-musl"
+    else:
+        raise ValueError(f"Unsupported architecture: {arch}")
+
+
+def get_arch_flags(arch: str) -> str:
+    if arch == "x32":
+        return "-mx32"
+    elif arch == "x86_64":
+        return "-m64"
+    elif arch == "aarch64":
+        return ""
+    elif arch == "riscv64":
+        return "-march=rv64gc -mabi=lp64d"
+    else:
+        return ""
+
+
+def get_cross_prefix(arch: str) -> str:
+    if arch == "x32":
+        return "x86_64-pc-linux-muslx32-"
+    elif arch == "x86_64":
+        return "x86_64-pc-linux-musl-"
+    elif arch == "aarch64":
+        return "aarch64-linux-musl-"
+    elif arch == "riscv64":
+        return "riscv64-linux-musl-"
+    else:
+        return f"{arch}-linux-musl-"

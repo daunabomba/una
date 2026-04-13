@@ -4,7 +4,7 @@ import argparse
 import shutil
 import os
 
-from mods.utils import init_or_reset_repo, rebase_and_push
+from mods.utils import init_or_reset_repo, rebase_and_push, get_target_triple, get_arch_flags
 from pathlib import Path
 
 bld_base = Path("./bld").absolute()
@@ -300,25 +300,13 @@ def main():
                 subprocess.run(["git", "clean", "-fdx"], cwd=r_path, check=True)
                 cleaned_dirs.add(r_path)
 
+            target_triple = get_target_triple(arch)
+            march = get_arch_flags(arch)
+            ld_musl = f"/usr/lib/ld-musl-{arch}.so.1"
             if arch == "x32":
-                target_triple = "x86_64-linux-muslx32"
-                march = "-mx32"
                 ld_musl = "/usr/lib/ld-musl-x32.so.1"
             elif arch == "x86_64":
-                target_triple = "x86_64-linux-musl"
-                march = "-m64"
                 ld_musl = "/usr/lib/ld-musl-x86_64.so.1"
-            elif arch == "aarch64":
-                target_triple = "aarch64-linux-musl"
-                march = ""
-                ld_musl = "/usr/lib/ld-musl-aarch64.so.1"
-            elif arch == "riscv64":
-                target_triple = "riscv64-linux-musl"
-                march = "-march=rv64gc -mabi=lp64d"
-                ld_musl = "/usr/lib/ld-musl-riscv64.so.1"
-            else:
-                print(f"Error: Unsupported architecture '{arch}' for target build.")
-                sys.exit(1)
 
             musl_cfg = arch_bld_dir / "musl.cfg"
             musl_cpp_cfg = arch_bld_dir / "muslc++.cfg"
