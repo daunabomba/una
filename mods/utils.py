@@ -139,6 +139,15 @@ def get_arch_flags(arch: str) -> str:
         return "-O2"
 
 
+def get_kernel_arch(arch: str) -> str:
+    return {
+        "x32": "x86",
+        "x86_64": "x86",
+        "aarch64": "arm64",
+        "riscv64": "riscv"
+    }.get(arch, "x86")
+
+
 def get_cross_prefix(arch: str) -> str:
     if arch == "x32":
         return "x86_64-pc-linux-muslx32-"
