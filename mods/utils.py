@@ -37,7 +37,7 @@ class TqdmProgress(RemoteProgress):
                 pass
 
 
-def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str) -> Repo:
+def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, tag: str = None) -> Repo:
     print(f"Initializing repo: {repo_dir}")
     if not os.path.exists(repo_dir):
         print(f"Cloning repo into {repo_dir}...")
@@ -74,22 +74,30 @@ def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str) -> Repo:
     repo.remotes.origin.fetch(progress=TqdmProgress())
 
     print("Fetching latest changes from una...")
-    repo.remotes.una.fetch(progress=TqdmProgress())
+    repo.remotes.una.fetch(progress=TqdmProgress(), tags=True)
 
-    print("Checking out branch una...")
-    try:
-        remote_ref = repo.remotes.una.refs[default_branch]
-    except (IndexError, AttributeError):
-        print(f"Error: Branch '{default_branch}' not found on remote '{remote_una_name}'.")
-        sys.exit(1)
-
-    if default_branch in repo.heads:
-        repo.heads[default_branch].set_tracking_branch(remote_ref)
-        repo.heads[default_branch].checkout()
+    if tag:
+        print(f"Checking out tag '{tag}'...")
+        try:
+            repo.git.checkout(tag)
+        except Exception as e:
+            print(f"Error checking out tag '{tag}': {e}")
+            sys.exit(1)
     else:
-        local_branch = repo.create_head(default_branch, remote_ref)
-        local_branch.set_tracking_branch(remote_ref)
-        local_branch.checkout()
+        print("Checking out branch una...")
+        try:
+            remote_ref = repo.remotes.una.refs[default_branch]
+        except (IndexError, AttributeError):
+            print(f"Error: Branch '{default_branch}' not found on remote '{remote_una_name}'.")
+            sys.exit(1)
+
+        if default_branch in repo.heads:
+            repo.heads[default_branch].set_tracking_branch(remote_ref)
+            repo.heads[default_branch].checkout()
+        else:
+            local_branch = repo.create_head(default_branch, remote_ref)
+            local_branch.set_tracking_branch(remote_ref)
+            local_branch.checkout()
 
     print("Running git clean -fdx...")
     repo.git.clean("-fdx")
@@ -123,7 +131,14 @@ def save_and_push(repo: Repo, branch_name: str, message: str, remote_name: str =
     except Exception as e:
         print(f"Nothing to commit or commit failed: {e}")
 
+    # Create and push tag
+    print(f"Creating tag: {message}")
+    repo.create_tag(message, force=True)
+    
     rebase_and_push(repo, branch_name, remote_name=remote_name)
+    
+    print(f"Pushing tag '{message}' to {remote_name}...")
+    repo.remotes[remote_name].push(message, force=True)
 
 
 def get_target_triple(arch: str) -> str:

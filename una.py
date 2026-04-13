@@ -115,6 +115,10 @@ def main():
         help="Run a specific component (e.g., linux) for the specified architecture.",
     )
     parser.add_argument(
+        "--tag",
+        help="A specific tag to checkout during initialization.",
+    )
+    parser.add_argument(
         "--status",
         action="store_true",
         help="Show git status for the top-level repo and all sub-repositories.",
@@ -297,12 +301,25 @@ def main():
                     shutil.copytree(skel_dir, staging_dir, symlinks=True, dirs_exist_ok=True)
                     shutil.copytree(skel_dir, target_dir, symlinks=True, dirs_exist_ok=True)
             
+        # Handle top-level repository if a tag is specified
+        if args.tag:
+            from git import Repo
+            top_repo_path = Path(__file__).parent.absolute()
+            print(f"Checking out tag '{args.tag}' for top-level repository (una)...")
+            top_repo = Repo(top_repo_path)
+            top_repo.remotes.origin.fetch(tags=True)
+            try:
+                top_repo.git.checkout(args.tag)
+            except Exception as e:
+                print(f"Error checking out tag '{args.tag}' for top-level repo: {e}")
+                sys.exit(1)
+        
         initialized_dirs = set()
         for cfg in repos_to_process:
             repo_dir = cfg["repo_dir"]
             if repo_dir in initialized_dirs:
                 continue
-            init_or_reset_repo(repo_dir=repo_dir, origin_url=cfg["origin_url"], una_url=cfg["una_url"])
+            init_or_reset_repo(repo_dir=repo_dir, origin_url=cfg["origin_url"], una_url=cfg["una_url"], tag=args.tag)
             initialized_dirs.add(repo_dir)
 
     if args.build:
