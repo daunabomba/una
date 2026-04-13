@@ -99,7 +99,11 @@ def main():
     parser.add_argument(
         "--arch",
         default="x32",
-        help="Target architecture(s), comma-separated (e.g., x32,x86_64). Default: x32",
+        help="Target architecture(s), comma-separated (e.g., x32,x86_64,aarch64,riscv64). Default: x32",
+    )
+    parser.add_argument(
+        "--kconfig",
+        help="Path to kernel configuration file. Defaults to confs/kernel.[arch].config",
     )
 
     args = parser.parse_args()
@@ -341,8 +345,13 @@ def main():
                 proj = next((r for r in all_target_repos if r["name"] == name), None)
                 if proj:
                     module = load_repo_una(proj["repo_dir"], proj.get("una_file", "una.py"))
-                    if hasattr(module, "target_configure"): module.target_configure(staging_dir, target_dir, arch=arch)
-                    if hasattr(module, "target_headers_install"): module.target_headers_install(staging_dir, target_dir, arch=arch)
+                    kwargs = {"arch": arch}
+                    if proj["name"] == "linux":
+                        kconfig = args.kconfig or Path("confs") / f"kernel.{arch}.config"
+                        kwargs["kconfig"] = Path(kconfig).absolute()
+
+                    if hasattr(module, "target_configure"): module.target_configure(staging_dir, target_dir, **kwargs)
+                    if hasattr(module, "target_headers_install"): module.target_headers_install(staging_dir, target_dir, **kwargs)
 
             print(f"[{arch}] Target Phase 1: Core Base Library (musl)")
             musl_proj = next((r for r in all_target_repos if r["name"] == "musl"), None)
@@ -384,8 +393,12 @@ def main():
             if linux_proj:
                 print(f"[{arch}] Target Phase 4: Kernel Finalization")
                 module = load_repo_una(linux_proj["repo_dir"], linux_proj.get("una_file", "una.py"))
-                if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir, arch=arch)
-                if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir, arch=arch)
+                
+                kconfig = args.kconfig or Path("confs") / f"kernel.{arch}.config"
+                kconfig_path = Path(kconfig).absolute()
+                
+                if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir, arch=arch, kconfig=kconfig_path)
+                if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir, arch=arch, kconfig=kconfig_path)
 
                 # Export kernel image
                 if "kernel_image" in linux_proj:
@@ -399,6 +412,12 @@ def main():
                             shutil.copy(src_img, dest_img)
                         else:
                             print(f"[{arch}] Warning: Kernel image not found at {src_img}")
+                        
+                        # Sync back updated config to source
+                        src_config = Path(linux_proj["repo_dir"]) / ".config"
+                        if src_config.exists():
+                            print(f"[{arch}] Syncing back updated kernel config to {kconfig_path}")
+                            shutil.copy(src_config, kconfig_path)
                     else:
                         print(f"[{arch}] Warning: No kernel image path defined for this architecture")
 
