@@ -134,7 +134,10 @@ def main():
     host_install_dir = bld_base / "host"
 
     if args.init == "DETECT_FAILED":
-        print("Error: --init was used without a BASE_URL, and no git remote origin was detected.")
+        print("Error: --init was used without a BASE_URL, and no git remote 'una' was detected.")
+        print("Please rename your remote to 'una' and checkout 'una' or 'una/branch name':")
+        print("  git remote rename <origin_name> una")
+        print("  git checkout una")
         sys.exit(1)
 
     if len(sys.argv) == 1:
