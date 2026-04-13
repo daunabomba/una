@@ -432,15 +432,57 @@ def main():
         arch = arches[0]
         print(f"\n--- Run Stage: {target_name} ({arch}) ---")
         
-        arch_bld_dir = bld_base / arch
-        staging_dir = arch_bld_dir / "staging"
-        target_dir = arch_bld_dir / "target"
-        
-        module = load_repo_una(proj["repo_dir"], proj.get("una_file", "una.py"))
-        if hasattr(module, "target_run"):
-            module.target_run(staging_dir, target_dir, arch=arch)
-        else:
-            print(f"Error: Component '{target_name}' does not implement target_run.")
+        kernel_img = bld_base / f"kernel.{arch}"
+        if not kernel_img.exists():
+            print(f"Error: Kernel image not found at {kernel_img}. Please build it first with --build {target_name}.")
+            sys.exit(1)
+
+        import subprocess
+        qemu_cmd = {
+            "x32": [
+                "qemu-system-x86_64", "-enable-kvm", "-no-reboot", "-m", "1G", "-machine", "q35", "-cpu", "host",
+                "-drive", "if=pflash,format=raw,readonly=on,file=/etc/bios/OVMF.fd",
+                "-serial", "mon:stdio",
+                "-netdev", "user,id=vmnic,restrict=n", "-device", "virtio-net-pci,romfile=,netdev=vmnic",
+                "-nodefaults", "-nographic",
+                "-kernel", str(kernel_img), "-append", "console=ttyS0"
+            ],
+            "x86_64": [
+                "qemu-system-x86_64", "-enable-kvm", "-no-reboot", "-m", "1G", "-machine", "q35", "-cpu", "host",
+                "-drive", "if=pflash,format=raw,readonly=on,file=/etc/bios/OVMF.fd",
+                "-serial", "mon:stdio",
+                "-netdev", "user,id=vmnic,restrict=n", "-device", "virtio-net-pci,romfile=,netdev=vmnic",
+                "-nodefaults", "-nographic",
+                "-kernel", str(kernel_img), "-append", "console=ttyS0"
+            ],
+            "aarch64": [
+                "qemu-system-aarch64", "-M", "virt", "-cpu", "cortex-a53", "-m", "1G",
+                "-serial", "mon:stdio",
+                "-netdev", "user,id=vmnic,restrict=n", "-device", "virtio-net-pci,romfile=,netdev=vmnic",
+                "-nodefaults", "-nographic",
+                "-kernel", str(kernel_img), "-append", "console=ttyAMA0"
+            ],
+            "riscv64": [
+                "qemu-system-riscv64", "-M", "virt", "-m", "1G",
+                "-serial", "mon:stdio",
+                "-netdev", "user,id=vmnic,restrict=n", "-device", "virtio-net-pci,romfile=,netdev=vmnic",
+                "-nodefaults", "-nographic",
+                "-kernel", str(kernel_img), "-append", "console=ttyS0"
+            ]
+        }
+
+        cmd = qemu_cmd.get(arch)
+        if not cmd:
+            print(f"Error: No run configuration for architecture: {arch}")
+            sys.exit(1)
+
+        print(f"Executing: {' '.join(cmd)}")
+        try:
+            subprocess.run(cmd, check=True)
+        except KeyboardInterrupt:
+            print("\nKernel execution stopped by user.")
+        except Exception as e:
+            print(f"Error during kernel execution: {e}")
             sys.exit(1)
 
     if args.rebase:
