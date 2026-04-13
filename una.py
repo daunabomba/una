@@ -193,6 +193,8 @@ def main():
             "kernel_image": {
                 "x32": "arch/x86/boot/bzImage",
                 "x86_64": "arch/x86/boot/bzImage",
+                "aarch64": "arch/arm64/boot/Image.gz",
+                "riscv64": "arch/riscv/boot/Image.gz",
             },
         },
     ]
@@ -268,7 +270,7 @@ def main():
             print("\n--- Host Stage ---")
             for r in host_repos:
                 module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
-                if hasattr(module, "host_configure"): module.host_configure(host_install_dir)
+                if hasattr(module, "host_configure"): module.host_configure(host_install_dir, arches=arches)
                 if hasattr(module, "host_build"): module.host_build(host_install_dir)
                 if hasattr(module, "host_install"): module.host_install(host_install_dir)
 
@@ -298,10 +300,21 @@ def main():
                 target_triple = "x86_64-linux-muslx32"
                 march = "-mx32"
                 ld_musl = "/usr/lib/ld-musl-x32.so.1"
-            else:
+            elif arch == "x86_64":
                 target_triple = "x86_64-linux-musl"
                 march = "-m64"
                 ld_musl = "/usr/lib/ld-musl-x86_64.so.1"
+            elif arch == "aarch64":
+                target_triple = "aarch64-linux-musl"
+                march = ""
+                ld_musl = "/usr/lib/ld-musl-aarch64.so.1"
+            elif arch == "riscv64":
+                target_triple = "riscv64-linux-musl"
+                march = "-march=rv64gc -mabi=lp64d"
+                ld_musl = "/usr/lib/ld-musl-riscv64.so.1"
+            else:
+                print(f"Error: Unsupported architecture '{arch}' for target build.")
+                sys.exit(1)
 
             musl_cfg = arch_bld_dir / "musl.cfg"
             musl_cpp_cfg = arch_bld_dir / "muslc++.cfg"
