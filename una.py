@@ -114,6 +114,11 @@ def main():
         "--run",
         help="Run a specific component (e.g., linux) for the specified architecture.",
     )
+    parser.add_argument(
+        "--status",
+        action="store_true",
+        help="Show git status for the top-level repo and all sub-repositories.",
+    )
 
     args = parser.parse_args()
     
@@ -248,6 +253,27 @@ def main():
         target_type = None if args.list == "all" else args.list
         list_repos(repos, target_type)
         return
+
+    if args.status:
+        import subprocess
+        print("=== Top-level Repository (una) ===")
+        subprocess.run(["git", "status", "-sb"])
+        
+        processed_dirs = set()
+        for r in repos:
+            r_path = Path(r["repo_dir"]).absolute()
+            if r_path in processed_dirs:
+                continue
+            
+            # Identify if it's a git repo
+            if r_path.exists() and (r_path / ".git").exists():
+                print(f"\n=== Repository: {r['name']} ({r['repo_dir']}) ===")
+                subprocess.run(["git", "status", "-sb"], cwd=r_path)
+            elif r_path.exists():
+                print(f"\n=== Repository: {r['name']} ({r['repo_dir']}) [Not a Git Repo] ===")
+            else:
+                print(f"\n=== Repository: {r['name']} ({r['repo_dir']}) [MISSING] ===")
+            processed_dirs.add(r_path)
 
     if args.init:
         for arch in arches:
