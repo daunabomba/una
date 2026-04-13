@@ -51,13 +51,20 @@ def list_repos(repos, target_type=None):
 def get_git_remote_base():
     """
     Attempts to determine the base URL of the current git repository's remote.
+    Specifically looks for a remote named 'una'.
     """
     try:
         from git import Repo
-        repo = Repo(Path(__file__).parent, search_parent_directories=True)
-        url = repo.remotes.origin.url
-        if "/" in url:
-            return url.rsplit("/", 1)[0]
+        # Use the absolute path of the script's directory for more reliable repo discovery
+        script_dir = Path(__file__).resolve().parent
+        repo = Repo(script_dir, search_parent_directories=True)
+        
+        # Find the remote named 'una' explicitly
+        for r in repo.remotes:
+            if r.name == 'una':
+                url = str(r.url)
+                if "/" in url:
+                    return url.rsplit("/", 1)[0]
     except Exception:
         pass
     return None
@@ -94,7 +101,7 @@ def main():
     parser.add_argument(
         "--rebase",
         action="store_true",
-        help="Rebase the local 'una' branch onto its configured upstream origin branch and push to una.",
+        help="Rebase the local 'una' branch onto its configured upstream una branch and push to una.",
     )
     parser.add_argument(
         "--arch",
@@ -310,7 +317,7 @@ def main():
             top_repo_path = Path(__file__).parent.absolute()
             print(f"Checking out tag '{args.tag}' for top-level repository (una)...")
             top_repo = Repo(top_repo_path)
-            top_repo.remotes.origin.fetch(tags=True)
+            top_repo.remotes.una.fetch(tags=True)
             try:
                 top_repo.git.checkout(args.tag)
             except Exception as e:
@@ -544,12 +551,12 @@ def main():
         if top_repo_path not in processed_dirs:
             print(f"\n--- Top-level Repository (una) ---")
             top_repo = Repo(top_repo_path)
-            # For top-level, we assume 'una' branch rebasing onto 'origin/una'
-            target_branch = "origin/una" 
+            # For top-level, we assume 'una' branch rebasing onto 'una/una'
+            target_branch = "una/una" 
             if args.save:
-                save_and_push(top_repo, target_branch, args.save, remote_name="origin")
+                save_and_push(top_repo, target_branch, args.save, remote_name="una")
             elif args.rebase:
-                rebase_and_push(top_repo, target_branch, remote_name="origin")
+                rebase_and_push(top_repo, target_branch, remote_name="una")
             processed_dirs.add(top_repo_path)
 
         # Handle sub-repositories
