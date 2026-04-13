@@ -110,6 +110,10 @@ def main():
         "--kconfig",
         help="Path to kernel configuration file. Defaults to confs/kernel.[arch].config",
     )
+    parser.add_argument(
+        "--run",
+        help="Run a specific component (e.g., linux) for the specified architecture.",
+    )
 
     args = parser.parse_args()
     
@@ -413,6 +417,31 @@ def main():
                             shutil.copy(src_config, kconfig_path)
                     else:
                         print(f"[{arch}] Warning: No kernel image path defined for this architecture")
+
+    if args.run:
+        target_name = args.run
+        proj = next((r for r in repos if r["name"] == target_name), None)
+        if not proj:
+            print(f"Error: Component '{target_name}' not found.")
+            sys.exit(1)
+        
+        if len(arches) > 1:
+            print("Error: --run only supports one architecture at a time.")
+            sys.exit(1)
+        
+        arch = arches[0]
+        print(f"\n--- Run Stage: {target_name} ({arch}) ---")
+        
+        arch_bld_dir = bld_base / arch
+        staging_dir = arch_bld_dir / "staging"
+        target_dir = arch_bld_dir / "target"
+        
+        module = load_repo_una(proj["repo_dir"], proj.get("una_file", "una.py"))
+        if hasattr(module, "target_run"):
+            module.target_run(staging_dir, target_dir, arch=arch)
+        else:
+            print(f"Error: Component '{target_name}' does not implement target_run.")
+            sys.exit(1)
 
     if args.rebase:
         from git import Repo
