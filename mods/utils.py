@@ -132,11 +132,11 @@ def get_arch_flags(arch: str) -> str:
     elif arch == "x86_64":
         return "-m64"
     elif arch == "aarch64":
-        return ""
+        return "-march=armv8-a"
     elif arch == "riscv64":
         return "-march=rv64gc -mabi=lp64d"
     else:
-        return ""
+        return "-O2"
 
 
 def get_cross_prefix(arch: str) -> str:

@@ -102,6 +102,11 @@ def main():
         help="Target architecture(s), comma-separated (e.g., x32,x86_64,aarch64,riscv64). Default: x32",
     )
     parser.add_argument(
+        "--no-build-host",
+        action="store_true",
+        help="Skip building host tools.",
+    )
+    parser.add_argument(
         "--kconfig",
         help="Path to kernel configuration file. Defaults to confs/kernel.[arch].config",
     )
@@ -270,7 +275,7 @@ def main():
         print("Starting build process.")
         
         host_repos = [r for r in repos_to_process if r["type"] == "host"]
-        if host_repos:
+        if host_repos and not args.no_build_host:
             print("\n--- Host Stage ---")
             for r in host_repos:
                 module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
