@@ -4,7 +4,7 @@ import argparse
 import shutil
 import os
 
-from mods.utils import init_or_reset_repo, rebase_and_push, get_target_triple, get_arch_flags
+from mods.utils import init_or_reset_repo, rebase_and_push, save_and_push, get_target_triple, get_arch_flags
 from pathlib import Path
 
 bld_base = Path("./bld").absolute()
@@ -118,6 +118,10 @@ def main():
         "--status",
         action="store_true",
         help="Show git status for the top-level repo and all sub-repositories.",
+    )
+    parser.add_argument(
+        "--save",
+        help="Stage all changes, commit with the provided message, then rebase and push for all repositories.",
     )
 
     args = parser.parse_args()
@@ -511,13 +515,38 @@ def main():
             print(f"Error during kernel execution: {e}")
             sys.exit(1)
 
-    if args.rebase:
+    if args.save or args.rebase:
         from git import Repo
-        rebased_dirs = set()
+        processed_dirs = set()
+
+        # Handle top-level repository
+        top_repo_path = Path(__file__).parent.absolute()
+        if top_repo_path not in processed_dirs:
+            print(f"\n--- Top-level Repository (una) ---")
+            top_repo = Repo(top_repo_path)
+            # For top-level, we assume 'una' branch rebasing onto 'origin/una'
+            target_branch = "origin/una" 
+            if args.save:
+                save_and_push(top_repo, target_branch, args.save, remote_name="origin")
+            elif args.rebase:
+                rebase_and_push(top_repo, target_branch, remote_name="origin")
+            processed_dirs.add(top_repo_path)
+
+        # Handle sub-repositories
         for cfg in repos_to_process:
             if not cfg.get("rebase", False): continue
-            rebase_and_push(Repo(cfg["repo_dir"]), f"origin/{cfg.get('branch', 'master')}")
-            rebased_dirs.add(cfg["repo_dir"])
+            r_path = Path(cfg["repo_dir"]).absolute()
+            if r_path in processed_dirs: continue
+            
+            print(f"\n--- Repository: {cfg['name']} ({cfg['repo_dir']}) ---")
+            repo = Repo(r_path)
+            target_branch = f"origin/{cfg.get('branch', 'master')}"
+            
+            if args.save:
+                save_and_push(repo, target_branch, args.save)
+            elif args.rebase:
+                rebase_and_push(repo, target_branch)
+            processed_dirs.add(r_path)
 
 
 if __name__ == "__main__":

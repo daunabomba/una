@@ -100,7 +100,7 @@ def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str) -> Repo:
     return repo
 
 
-def rebase_and_push(repo: Repo, branch_name: str):
+def rebase_and_push(repo: Repo, branch_name: str, remote_name: str = remote_una_name):
     print(f"Rebasing current branch upon {branch_name}...")
     # These will raise exceptions on failure, which will stop the script
     repo.git.rebase(branch_name)
@@ -109,8 +109,21 @@ def rebase_and_push(repo: Repo, branch_name: str):
     # allow-empty to ensure we always have the 'rebase' marker if requested
     repo.git.commit("--allow-empty", "-m", "rebase")
 
-    print(f"Pushing rebased branch to {remote_una_name}...")
-    repo.remotes[remote_una_name].push(repo.active_branch.name, force=True, progress=TqdmProgress())
+    print(f"Pushing rebased branch to {remote_name}...")
+    repo.remotes[remote_name].push(repo.active_branch.name, force=True, progress=TqdmProgress())
+
+
+def save_and_push(repo: Repo, branch_name: str, message: str, remote_name: str = remote_una_name):
+    print(f"Staging all changes in {repo.working_dir}...")
+    repo.git.add(A=True)
+    
+    try:
+        print(f"Committing with message: {message}")
+        repo.git.commit("-m", message)
+    except Exception as e:
+        print(f"Nothing to commit or commit failed: {e}")
+
+    rebase_and_push(repo, branch_name, remote_name=remote_name)
 
 
 def get_target_triple(arch: str) -> str:
