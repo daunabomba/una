@@ -190,6 +190,10 @@ def main():
             "type": "other",
             "branch": "master",
             "rebase": True,
+            "kernel_image": {
+                "x32": "arch/x86/boot/bzImage",
+                "x86_64": "arch/x86/boot/bzImage",
+            },
         },
     ]
 
@@ -275,6 +279,21 @@ def main():
             staging_dir = arch_bld_dir / "staging"
             target_dir = arch_bld_dir / "target"
 
+            # Clean target repos before build
+            cleaned_dirs = set()
+            host_dirs = {Path(r["repo_dir"]).absolute() for r in repos if r["type"] == "host"}
+            for r in target_configs_to_build:
+                r_path = Path(r["repo_dir"]).absolute()
+                if r_path in cleaned_dirs: continue
+                if r_path in host_dirs:
+                    print(f"[{arch}] Skipping git clean for {r['name']} (shared with host components)")
+                    continue
+                
+                print(f"[{arch}] Cleaning {r['name']} ({r['repo_dir']})...")
+                import subprocess
+                subprocess.run(["git", "clean", "-fdx"], cwd=r_path, check=True)
+                cleaned_dirs.add(r_path)
+
             if arch == "x32":
                 target_triple = "x86_64-linux-muslx32"
                 march = "-mx32"
@@ -354,6 +373,21 @@ def main():
                 module = load_repo_una(linux_proj["repo_dir"], linux_proj.get("una_file", "una.py"))
                 if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir, arch=arch)
                 if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir, arch=arch)
+
+                # Export kernel image
+                if "kernel_image" in linux_proj:
+                    image_map = linux_proj["kernel_image"]
+                    if arch in image_map:
+                        rel_path = image_map[arch]
+                        src_img = Path(linux_proj["repo_dir"]) / rel_path
+                        dest_img = bld_base / f"kernel.{arch}"
+                        if src_img.exists():
+                            print(f"[{arch}] Copying kernel image to {dest_img}")
+                            shutil.copy(src_img, dest_img)
+                        else:
+                            print(f"[{arch}] Warning: Kernel image not found at {src_img}")
+                    else:
+                        print(f"[{arch}] Warning: No kernel image path defined for this architecture")
 
     if args.rebase:
         from git import Repo
