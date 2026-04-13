@@ -207,7 +207,7 @@ def main():
                 "x32": "arch/x86/boot/bzImage",
                 "x86_64": "arch/x86/boot/bzImage",
                 "aarch64": "arch/arm64/boot/Image.gz",
-                "riscv64": "arch/riscv/boot/Image.gz",
+                "riscv64": "arch/riscv/boot/Image",
             },
         },
     ]
