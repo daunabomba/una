@@ -119,7 +119,8 @@ def main():
     )
     parser.add_argument(
         "--run",
-        help="Run a specific component (e.g., linux) for the specified architecture.",
+        action="store_true",
+        help="Run the default kernel using emulation for specified architecture.",
     )
     parser.add_argument(
         "--tag",
@@ -475,7 +476,7 @@ def main():
                         print(f"[{arch}] Warning: No kernel image path defined for this architecture")
 
     if args.run:
-        target_name = args.run
+        target_name = "linux"
         proj = next((r for r in repos if r["name"] == target_name), None)
         if not proj:
             print(f"Error: Component '{target_name}' not found.")
@@ -496,7 +497,7 @@ def main():
         import subprocess
         qemu_cmd = {
             "x32": [
-                "qemu-system-x86_64", "-enable-kvm", "-no-reboot", "-m", "1G", "-machine", "q35", "-cpu", "host",
+                "qemu-system-x86_64", "-enable-kvm", "-m", "1G", "-machine", "q35", "-cpu", "host",
                 "-drive", "if=pflash,format=raw,readonly=on,file=/etc/bios/OVMF.fd",
                 "-serial", "mon:stdio",
                 "-netdev", "user,id=vmnic,restrict=n", "-device", "virtio-net-pci,romfile=,netdev=vmnic",
@@ -504,7 +505,7 @@ def main():
                 "-kernel", str(kernel_img), "-append", "console=ttyS0"
             ],
             "x86_64": [
-                "qemu-system-x86_64", "-enable-kvm", "-no-reboot", "-m", "1G", "-machine", "q35", "-cpu", "host",
+                "qemu-system-x86_64", "-enable-kvm", "-m", "1G", "-machine", "q35", "-cpu", "host",
                 "-drive", "if=pflash,format=raw,readonly=on,file=/etc/bios/OVMF.fd",
                 "-serial", "mon:stdio",
                 "-netdev", "user,id=vmnic,restrict=n", "-device", "virtio-net-pci,romfile=,netdev=vmnic",
