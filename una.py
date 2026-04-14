@@ -206,6 +206,15 @@ def main():
             "rebase": True,
         },
         {
+            "name": "nsd",
+            "una_repo": "nsd.git",
+            "repo_dir": BASE_DIR / "repo/nsd",
+            "origin_url": "https://github.com/NLnetLabs/nsd.git",
+            "type": "other",
+            "branch": "master",
+            "rebase": True,
+        },
+        {
             "name": "mxmux",
             "una_repo": "mxmux.git",
             "repo_dir": BASE_DIR / "repo/mxmux",
