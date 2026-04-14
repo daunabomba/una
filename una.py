@@ -3,15 +3,20 @@
 import argparse
 import shutil
 import os
-
-from mods.utils import init_or_reset_repo, rebase_and_push, save_and_push, get_target_triple, get_arch_flags
+import sys
 from pathlib import Path
 
-bld_base = Path("./bld").absolute()
-skel_dir = Path("./skel").absolute()
+# Add the script's directory to sys.path so 'mods' can be imported from anywhere
+BASE_DIR = Path(__file__).resolve().parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
+from mods.utils import init_or_reset_repo, rebase_and_push, save_and_push, get_target_triple, get_arch_flags
+
+bld_base = BASE_DIR / "bld"
+skel_dir = BASE_DIR / "skel"
 
 import importlib.util
-import sys
 
 
 def load_repo_una(repo_dir: str, una_file_name: str = "una.py"):
@@ -156,7 +161,7 @@ def main():
         {
             "name": "llvm-host",
             "una_repo": "llvm-project.git",
-            "repo_dir": "./repo/llvm",
+            "repo_dir": BASE_DIR / "repo/llvm",
             "una_file": "una/host.py",
             "origin_url": "/mnt/work/bld/llvm-project.git",
             "type": "host",
@@ -166,7 +171,7 @@ def main():
         {
             "name": "musl",
             "una_repo": "musl.git",
-            "repo_dir": "./repo/musl",
+            "repo_dir": BASE_DIR / "repo/musl",
             "origin_url": "/mnt/work/bld/musl.git",
             "type": "base",
             "branch": "master",
@@ -175,7 +180,7 @@ def main():
         {
             "name": "llvm-runtime",
             "una_repo": "llvm-project.git",
-            "repo_dir": "./repo/llvm",
+            "repo_dir": BASE_DIR / "repo/llvm",
             "una_file": "una/runtime.py",
             "origin_url": "/mnt/work/bld/llvm-project.git",
             "type": "base",
@@ -185,7 +190,7 @@ def main():
         {
             "name": "busybox",
             "una_repo": "busybox.git",
-            "repo_dir": "./repo/busybox",
+            "repo_dir": BASE_DIR / "repo/busybox",
             "origin_url": "/mnt/work/bld/busybox.git",
             "type": "other",
             "branch": "master",
@@ -194,7 +199,7 @@ def main():
         {
             "name": "openssl",
             "una_repo": "openssl.git",
-            "repo_dir": "./repo/openssl",
+            "repo_dir": BASE_DIR / "repo/openssl",
             "origin_url": "/mnt/work/bld/openssl.git",
             "type": "other",
             "branch": "master",
@@ -203,7 +208,7 @@ def main():
         {
             "name": "mxmux",
             "una_repo": "mxmux.git",
-            "repo_dir": "./repo/mxmux",
+            "repo_dir": BASE_DIR / "repo/mxmux",
             "origin_url": "https://github.com/daunabomba/mxmux.git",
             "type": "other",
             "branch": "master",
@@ -212,7 +217,7 @@ def main():
         {
             "name": "wireguard-tools",
             "una_repo": "wireguard-tools.git",
-            "repo_dir": "./repo/wireguard-tools",
+            "repo_dir": BASE_DIR / "repo/wireguard-tools",
             "origin_url": "https://git.zx2c4.com/wireguard-tools",
             "type": "other",
             "branch": "master",
@@ -221,7 +226,7 @@ def main():
         {
             "name": "linux",
             "una_repo": "linux.git",
-            "repo_dir": "./repo/kernel",
+            "repo_dir": BASE_DIR / "repo/kernel",
             "origin_url": "/mnt/work/bld/linux-stable.git",
             "type": "other",
             "branch": "master",
@@ -275,7 +280,7 @@ def main():
     if args.status:
         import subprocess
         print("=== Top-level Repository (una) ===")
-        subprocess.run(["git", "status", "-sb"])
+        subprocess.run(["git", "status", "-sb"], cwd=BASE_DIR)
         
         processed_dirs = set()
         for r in repos:
@@ -314,7 +319,7 @@ def main():
         # Handle top-level repository if a tag is specified
         if args.tag:
             from git import Repo
-            top_repo_path = Path(__file__).parent.absolute()
+            top_repo_path = BASE_DIR
             print(f"Checking out tag '{args.tag}' for top-level repository (una)...")
             top_repo = Repo(top_repo_path)
             top_repo.remotes.una.fetch(tags=True)
@@ -401,7 +406,7 @@ def main():
                     module = load_repo_una(proj["repo_dir"], proj.get("una_file", "una.py"))
                     kwargs = {"arch": arch}
                     if proj["name"] == "linux":
-                        kconfig = args.kconfig or Path("confs") / f"kernel.{arch}.config"
+                        kconfig = args.kconfig or BASE_DIR / "confs" / f"kernel.{arch}.config"
                         kwargs["kconfig"] = Path(kconfig).absolute()
 
                     if hasattr(module, "target_configure"): module.target_configure(staging_dir, target_dir, **kwargs)
@@ -448,7 +453,7 @@ def main():
                 print(f"[{arch}] Target Phase 4: Kernel Finalization")
                 module = load_repo_una(linux_proj["repo_dir"], linux_proj.get("una_file", "una.py"))
                 
-                kconfig = args.kconfig or Path("confs") / f"kernel.{arch}.config"
+                kconfig = args.kconfig or BASE_DIR / "confs" / f"kernel.{arch}.config"
                 kconfig_path = Path(kconfig).absolute()
                 
                 if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir, arch=arch, kconfig=kconfig_path)
@@ -547,7 +552,7 @@ def main():
         processed_dirs = set()
 
         # Handle top-level repository
-        top_repo_path = Path(__file__).parent.absolute()
+        top_repo_path = BASE_DIR
         if top_repo_path not in processed_dirs:
             print(f"\n--- Top-level Repository (una) ---")
             top_repo = Repo(top_repo_path)
