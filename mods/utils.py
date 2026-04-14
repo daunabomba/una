@@ -118,7 +118,8 @@ def rebase_and_push(repo: Repo, branch_name: str, remote_name: str = remote_una_
     repo.git.commit("--allow-empty", "-m", "rebase")
 
     print(f"Pushing rebased branch to {remote_name}...")
-    repo.remotes[remote_name].push(repo.active_branch.name, force=True, progress=TqdmProgress())
+    refspec = f"refs/heads/{repo.active_branch.name}:refs/heads/{repo.active_branch.name}"
+    repo.remotes[remote_name].push(refspec, force=True, progress=TqdmProgress())
 
 
 def save_and_push(repo: Repo, branch_name: str, message: str, remote_name: str = remote_una_name):
@@ -138,7 +139,7 @@ def save_and_push(repo: Repo, branch_name: str, message: str, remote_name: str =
     rebase_and_push(repo, branch_name, remote_name=remote_name)
     
     print(f"Pushing tag '{message}' to {remote_name}...")
-    repo.remotes[remote_name].push(message, force=True)
+    repo.remotes[remote_name].push(f"refs/tags/{message}:refs/tags/{message}", force=True)
 
 
 def get_target_triple(arch: str) -> str:
