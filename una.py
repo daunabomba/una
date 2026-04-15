@@ -224,6 +224,15 @@ def main():
             "rebase": False,
         },
         {
+            "name": "dropbear",
+            "una_repo": "dropbear.git",
+            "repo_dir": BASE_DIR / "repo/dropbear",
+            "origin_url": "https://github.com/mkj/dropbear.git",
+            "type": "other",
+            "branch": "master",
+            "rebase": True,
+        },
+        {
             "name": "wireguard-tools",
             "una_repo": "wireguard-tools.git",
             "repo_dir": BASE_DIR / "repo/wireguard-tools",
