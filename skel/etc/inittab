@@ -13,4 +13,6 @@
 ::sysinit:/usr/bin/hostname xx
 ::sysinit:/usr/sbin/mdev -s
 
+::respawn:/usr/sbin/dropbear -P /run/dropbear.pid -F -r /etc/dropbear_ed25519_host_key -s
+
 console::respawn:-/bin/sh
