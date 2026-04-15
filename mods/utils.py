@@ -65,16 +65,33 @@ def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, tag: str = 
     print("Setting fetch refspec for una...")
     repo.git.config(f"remote.{remote_una_name}.fetch", f"+refs/heads/*:refs/remotes/{remote_una_name}/*")
 
-    print("Cleaning up stale una refs...")
-    una_refs_path = os.path.join(repo.git_dir, f"refs/remotes/{remote_una_name}")
-    if os.path.exists(una_refs_path):
-        shutil.rmtree(una_refs_path, ignore_errors=True)
 
     print("Fetching latest changes from origin...")
     repo.remotes.origin.fetch(progress=TqdmProgress())
 
     print("Fetching latest changes from una...")
     repo.remotes.una.fetch(progress=TqdmProgress(), tags=True)
+
+    # Check for local unpushed changes or dirty state before we reset
+    unpushed = []
+    try:
+        if default_branch in repo.heads:
+            local_branch = repo.heads[default_branch]
+            remote_ref = repo.remotes[remote_una_name].refs[default_branch]
+            unpushed = list(repo.iter_commits(f"{remote_ref.path}..{local_branch.path}"))
+    except (IndexError, AttributeError):
+        pass
+
+    if unpushed or repo.is_dirty(untracked_files=True):
+        print("\n" + "!" * 80)
+        print(f"WARNING: Repository {repo_dir} has local changes that will be LOST!")
+        if unpushed:
+            print(f" - {len(unpushed)} unpushed commits on branch '{default_branch}'")
+        if repo.is_dirty(untracked_files=True):
+            print(" - Uncommitted or untracked changes in the working tree")
+        print("!" * 80 + "\n")
+        # In an interactive shell we might wait, but here we proceed as the script is automated.
+        # However, specifically reporting it helps the user see WHY their files vanished.
 
     if tag:
         print(f"Checking out tag '{tag}'...")
