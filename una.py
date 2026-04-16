@@ -115,6 +115,35 @@ def is_repo_dirty(repo_path: Path):
     return len(result.stdout.strip()) > 0
 
 
+def sync_kernel_config(src: Path, dest: Path):
+    """
+    Syncs back the updated kernel config, stripping leading comments
+    and forcing specific values like CONFIG_CC_VERSION_TEXT.
+    """
+    if not src.exists():
+        return
+    content = src.read_text()
+    lines = content.splitlines()
+    out_lines = []
+    
+    # Skip leading comments and empty lines
+    header_done = False
+    for line in lines:
+        if not header_done:
+            if line.strip().startswith("#") or not line.strip():
+                continue
+            else:
+                header_done = True
+        
+        # Process entries
+        if line.startswith("CONFIG_CC_VERSION_TEXT="):
+            out_lines.append('CONFIG_CC_VERSION_TEXT="clang"')
+        else:
+            out_lines.append(line)
+            
+    dest.write_text("\n".join(out_lines) + "\n")
+
+
 def list_repos(repos, target_type=None):
     """
     Helper function to filter and print repo directories by type.
@@ -721,8 +750,8 @@ def main():
                         # Sync back updated config to source
                         src_config = Path(linux_proj["repo_dir"]) / ".config"
                         if src_config.exists():
-                            print(f"[{arch}] Syncing back updated kernel config to {kconfig_path}")
-                            shutil.copy(src_config, kconfig_path)
+                            print(f"[{arch}] Syncing back sanitized updated kernel config to {kconfig_path}")
+                            sync_kernel_config(src_config, kconfig_path)
                     else:
                         print(f"[{arch}] Warning: No kernel image path defined for this architecture")
 
