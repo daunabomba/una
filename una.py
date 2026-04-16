@@ -148,6 +148,11 @@ def main():
         help=f"Initialize or reinit repos with the specified 'una' base URL. Defaults to the current repository's remote base ({git_base}) if not specified.",
     )
     parser.add_argument(
+        "--init-with-origin",
+        action="store_true",
+        help="Include original upstream remotes and enable rebasing projects to them during initialization.",
+    )
+    parser.add_argument(
         "--list",
         choices=["host", "base", "other", "all"],
         help="List repos of the specified type.",
@@ -354,6 +359,8 @@ def main():
     
     for r in repos_config:
         config = r.copy()
+        if not args.init_with_origin:
+            config["rebase"] = False
         if una_base:
             base = una_base
             if not base.endswith("/") and not base.endswith(":"):
@@ -443,7 +450,13 @@ def main():
             repo_dir = cfg["repo_dir"]
             if repo_dir in initialized_dirs:
                 continue
-            init_or_reset_repo(repo_dir=repo_dir, origin_url=cfg["origin_url"], una_url=cfg["una_url"], tag=args.tag)
+            init_or_reset_repo(
+                repo_dir=repo_dir, 
+                origin_url=cfg["origin_url"], 
+                una_url=cfg["una_url"], 
+                tag=args.tag,
+                with_origin=args.init_with_origin
+            )
             initialized_dirs.add(repo_dir)
 
     if args.build:
