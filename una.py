@@ -207,8 +207,16 @@ def main():
         metavar="tag",
         help="Checkout a specific tag in all repositories.",
     )
+    parser.add_argument(
+        "--git-config",
+        help="Path to a global Git configuration file to use for all operations.",
+    )
 
     args = parser.parse_args()
+    
+    if args.git_config:
+        os.environ["GIT_CONFIG_GLOBAL"] = os.path.abspath(os.path.expanduser(args.git_config))
+        os.environ["GIT_CONFIG_NOSYSTEM"] = "1" # Optional: ensure purity
     
     arches = [a.strip() for a in args.arch.split(",")]
     host_install_dir = bld_base / "host"

@@ -50,9 +50,6 @@ def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, with_origin
         print(f"Repo exists at {repo_dir}; opening...")
         repo = Repo(repo_dir)
 
-    print("Configuring SSH key...")
-    repo.git.config("core.sshCommand", "ssh -i ~/.github.key -o IdentitiesOnly=yes")
-
     if with_origin:
         if "origin" not in [r.name for r in repo.remotes]:
             repo.create_remote("origin", origin_url)
