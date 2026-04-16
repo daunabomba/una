@@ -652,7 +652,7 @@ def main():
         import subprocess
         qemu_cmd = {
             "x32": [
-                "qemu-system-x86_64", "-enable-kvm", "-m", "1G", "-machine", "q35", "-cpu", "host",
+                "qemu-system-x86_64", "-enable-kvm", "-no-reboot", "-m", "1G", "-machine", "q35", "-cpu", "host",
                 "-drive", "if=pflash,format=raw,readonly=on,file=/etc/bios/OVMF.fd",
                 "-serial", "mon:stdio",
                 "-netdev", "user,id=vmnic,restrict=n,hostfwd=tcp::2022-:22", "-device", "virtio-net-pci,romfile=,netdev=vmnic",
@@ -660,7 +660,7 @@ def main():
                 "-kernel", str(kernel_img), "-append", "console=ttyS0"
             ],
             "x86_64": [
-                "qemu-system-x86_64", "-enable-kvm", "-m", "1G", "-machine", "q35", "-cpu", "host",
+                "qemu-system-x86_64", "-enable-kvm", "-no-reboot", "-m", "1G", "-machine", "q35", "-cpu", "host",
                 "-drive", "if=pflash,format=raw,readonly=on,file=/etc/bios/OVMF.fd",
                 "-serial", "mon:stdio",
                 "-netdev", "user,id=vmnic,restrict=n", "-device", "virtio-net-pci,romfile=,netdev=vmnic",
@@ -668,14 +668,14 @@ def main():
                 "-kernel", str(kernel_img), "-append", "console=ttyS0"
             ],
             "aarch64": [
-                "qemu-system-aarch64", "-M", "virt", "-cpu", "cortex-a53", "-m", "1G",
+                "qemu-system-aarch64", "-no-reboot", "-M", "virt", "-cpu", "cortex-a53", "-m", "1G",
                 "-serial", "mon:stdio",
                 "-netdev", "user,id=vmnic,restrict=n", "-device", "virtio-net-pci,romfile=,netdev=vmnic",
                 "-nodefaults", "-nographic",
                 "-kernel", str(kernel_img), "-append", "console=ttyAMA0"
             ],
             "riscv64": [
-                "qemu-system-riscv64", "-M", "virt", "-m", "1G",
+                "qemu-system-riscv64", "-no-reboot", "-M", "virt", "-m", "1G",
                 "-serial", "mon:stdio",
                 "-netdev", "user,id=vmnic,restrict=n", "-device", "virtio-net-pci,romfile=,netdev=vmnic",
                 "-nodefaults", "-nographic",
