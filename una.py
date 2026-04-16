@@ -414,6 +414,13 @@ def main():
                 print(f"[{arch}] Cleaning {r['name']} ({r['repo_dir']})...")
                 import subprocess
                 subprocess.run(["git", "clean", "-fdx"], cwd=r_path, check=True)
+                # Ensure submodules are also cleaned to avoid arch-mismatch in static libs (e.g. nsd -> simdzone)
+                if (r_path / ".gitmodules").exists():
+                    try:
+                        subprocess.run(["git", "submodule", "foreach", "--recursive", "git", "clean", "-fdx"], cwd=r_path, check=True)
+                    except subprocess.CalledProcessError:
+                        # Submodules might not be initialized yet, which is fine
+                        pass
                 cleaned_dirs.add(r_path)
 
             target_triple = get_target_triple(arch)
