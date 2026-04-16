@@ -37,7 +37,7 @@ class TqdmProgress(RemoteProgress):
                 pass
 
 
-def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, tag: str = None, with_origin: bool = True) -> Repo:
+def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, with_origin: bool = True) -> Repo:
     print(f"Initializing repo: {repo_dir}")
     if not os.path.exists(repo_dir):
         clone_url = origin_url if with_origin else una_url
@@ -97,28 +97,20 @@ def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, tag: str = 
         # In an interactive shell we might wait, but here we proceed as the script is automated.
         # However, specifically reporting it helps the user see WHY their files vanished.
 
-    if tag:
-        print(f"Checking out tag '{tag}'...")
-        try:
-            repo.git.checkout(tag)
-        except Exception as e:
-            print(f"Error checking out tag '{tag}': {e}")
-            sys.exit(1)
-    else:
-        print("Checking out branch una...")
-        try:
-            remote_ref = repo.remotes.una.refs[default_branch]
-        except (IndexError, AttributeError):
-            print(f"Error: Branch '{default_branch}' not found on remote '{remote_una_name}'.")
-            sys.exit(1)
+    print("Checking out branch una...")
+    try:
+        remote_ref = repo.remotes.una.refs[default_branch]
+    except (IndexError, AttributeError):
+        print(f"Error: Branch '{default_branch}' not found on remote '{remote_una_name}'.")
+        sys.exit(1)
 
-        if default_branch in repo.heads:
-            repo.heads[default_branch].set_tracking_branch(remote_ref)
-            repo.heads[default_branch].checkout()
-        else:
-            local_branch = repo.create_head(default_branch, remote_ref)
-            local_branch.set_tracking_branch(remote_ref)
-            local_branch.checkout()
+    if default_branch in repo.heads:
+        repo.heads[default_branch].set_tracking_branch(remote_ref)
+        repo.heads[default_branch].checkout()
+    else:
+        local_branch = repo.create_head(default_branch, remote_ref)
+        local_branch.set_tracking_branch(remote_ref)
+        local_branch.checkout()
 
     print("Running git clean -fdx...")
     repo.git.clean("-fdx")
