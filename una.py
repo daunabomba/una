@@ -75,6 +75,61 @@ def get_git_remote_base():
     return None
 
 
+def create_test_disk(disk_path):
+    if disk_path.exists():
+        print(f"Test disk {disk_path} already exists. Skipping creation.")
+        return
+    
+    print(f"Creating 1G test disk at {disk_path}...")
+    import subprocess
+    # 1. Create 1G raw image
+    subprocess.run(["qemu-img", "create", "-f", "raw", str(disk_path), "1G"], check=True)
+    
+    # 2. Partition with sgdisk
+    # Alignment=1 to allow sector 3. Table size reduced to 4 entries to fit starting at sector 3.
+    subprocess.run(["sgdisk", "--set-alignment=1", "--resize-table=4", str(disk_path)], check=True)
+    subprocess.run(["sgdisk", "--set-alignment=1", "--new=1:3:65365", str(disk_path)], check=True)
+    subprocess.run(["sgdisk", "--typecode=1:ef00", str(disk_path)], check=True)
+    subprocess.run(["sgdisk", "--set-alignment=1", "--new=2:65536:0", str(disk_path)], check=True)
+    subprocess.run(["sgdisk", "--typecode=2:8300", str(disk_path)], check=True)
+    
+    # 3. Format Partitions
+    p1_sectors = 65365 - 3 + 1
+    p1_size = p1_sectors * 512
+    
+    # Calculate P2 size. 1G = 2097152 sectors.
+    # We find the actual last sector from sgdisk or just assume 1G minus GPT overhead.
+    total_sectors = 1024 * 1024 * 1024 // 512
+    p2_sectors = total_sectors - 65536 - 34 # 34 for the backup GPT at the end
+    p2_size = p2_sectors * 512
+    
+    p1_img = disk_path.with_suffix(".p1.tmp")
+    p2_img = disk_path.with_suffix(".p2.tmp")
+    
+    try:
+        # Format P1 (FAT16 for EFI)
+        print("Formatting Partition 1 (FAT16)...")
+        p1_img.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["truncate", "-s", str(p1_size), str(p1_img)], check=True)
+        subprocess.run(["mkfs.fat", "-f1", "-F16", "-n", "BOOT0EFI", str(p1_img)], check=True)
+        subprocess.run(["dd", f"if={p1_img}", f"of={disk_path}", "bs=512", "seek=3", "conv=notrunc"], check=True)
+        
+        # Format P2 (EXT4)
+        print("Formatting Partition 2 (EXT4)...")
+        subprocess.run(["truncate", "-s", str(p2_size), str(p2_img)], check=True)
+        subprocess.run(["mkfs.ext4", "-F", str(p2_img)], check=True)
+        subprocess.run(["dd", f"if={p2_img}", f"of={disk_path}", "bs=512", "seek=65536", "conv=notrunc"], check=True)
+        
+        print("Test disk created successfully.")
+    except Exception as e:
+        print(f"Error creating test disk: {e}")
+        if disk_path.exists(): disk_path.unlink()
+        raise
+    finally:
+        if p1_img.exists(): p1_img.unlink()
+        if p2_img.exists(): p2_img.unlink()
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Initialize or reset Git repos from a list.",
@@ -140,11 +195,20 @@ def main():
         "--save",
         help="Stage all changes, commit with the provided message, then rebase and push for all repositories.",
     )
+    parser.add_argument(
+        "--create-disk",
+        action="store_true",
+        help="Create a shared 1G test disk in the bld directory.",
+    )
 
     args = parser.parse_args()
     
     arches = [a.strip() for a in args.arch.split(",")]
     host_install_dir = bld_base / "host"
+    test_disk = bld_base / "test.img"
+
+    if args.create_disk:
+        create_test_disk(test_disk)
 
     if args.init == "DETECT_FAILED":
         print("Error: --init was used without a BASE_URL, and no git remote 'una' was detected.")
@@ -597,6 +661,11 @@ def main():
         if not cmd:
             print(f"Error: No run configuration for architecture: {arch}")
             sys.exit(1)
+
+        test_disk = bld_base / "test.img"
+        if test_disk.exists():
+            print(f"Adding test disk {test_disk} to QEMU...")
+            cmd += ["-drive", f"file={test_disk},format=raw,if=virtio"]
 
         print(f"Executing: {' '.join(cmd)}")
         try:
