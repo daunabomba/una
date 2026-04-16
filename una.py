@@ -198,6 +198,7 @@ def main():
     )
     parser.add_argument(
         "--save",
+        action="store_true",
         help="Stage all changes, commit with the provided message, then rebase and push for all repositories.",
     )
     parser.add_argument(
