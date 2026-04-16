@@ -73,8 +73,15 @@ def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, with_origin
     print("Setting fetch refspec for una...")
     repo.git.config(f"remote.{remote_una_name}.fetch", f"+refs/heads/*:refs/remotes/{remote_una_name}/*")
 
-    print("Fetching latest changes from una...")
-    repo.remotes.una.fetch(progress=TqdmProgress(), tags=True)
+    remote_una = repo.remotes[remote_una_name]
+    print(f"Fetching latest changes from {remote_una_name} ({remote_una.url})...")
+    try:
+        remote_una.fetch(progress=TqdmProgress(), tags=True)
+    except Exception as e:
+        print(f"\nError: Failed to fetch from remote '{remote_una_name}' at {remote_una.url}")
+        print(f"Please ensure the repository exists and you have access.")
+        print(f"Git Error Details: {e}")
+        sys.exit(1)
 
     # Check for local unpushed changes or dirty state before we reset
     unpushed = []
