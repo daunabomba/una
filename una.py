@@ -434,17 +434,17 @@ def main():
                 lld_path = host_install_dir / "bin" / "ld.lld"
                 lib_p = staging_dir / "usr" / "lib"
                 
-                # Common flags
-                common_flags = f"--target={target_triple}\n--sysroot={staging_dir}\n-isystem {staging_dir}/usr/include\n-fPIE\n{march}\n"
+                # Common flags (excluding system includes to control order)
+                common_flags = f"--target={target_triple}\n--sysroot={staging_dir}\n-fPIE\n{march}\n"
                 
                 # Pure C Config
-                musl_cfg.write_text(f"{common_flags}-fuse-ld={lld_path}\n-nostdlib\n-L{staging_dir}/usr/lib\n-lc\n-Wl,-dynamic-linker,{ld_musl}\n")
+                musl_cfg.write_text(f"{common_flags}-isystem {staging_dir}/usr/include\n-fuse-ld={lld_path}\n-nostdlib\n-L{staging_dir}/usr/lib\n-lc\n-Wl,-dynamic-linker,{ld_musl}\n")
                 
-                # C++ Config
-                musl_cxx_cfg.write_text(f"{common_flags}-isystem {staging_dir}/usr/include/c++/v1\n--ld-path={lld_path}\n-nostdlib\n{lib_p}/Scrt1.o\n{lib_p}/crti.o\n-L{lib_p}\n-lc++\n-lc++abi\n-lunwind\n-lc\n{lib_p}/crtn.o\n-Wl,-dynamic-linker,{ld_musl}\n")
+                # C++ Config (MUST have c++/v1 before usr/include)
+                musl_cxx_cfg.write_text(f"{common_flags}-isystem {staging_dir}/usr/include/c++/v1\n-isystem {staging_dir}/usr/include\n--ld-path={lld_path}\n-nostdlib\n{lib_p}/Scrt1.o\n{lib_p}/crti.o\n-L{lib_p}\n-lc++\n-lc++abi\n-lunwind\n-lc\n{lib_p}/crtn.o\n-Wl,-dynamic-linker,{ld_musl}\n")
                 
                 # Static Config
-                musl_static_cfg.write_text(f"{common_flags}-fuse-ld={lld_path}\n-nostdlib\n{lib_p}/Scrt1.o\n{lib_p}/crti.o\n-L{lib_p}\n-lc\n{lib_p}/crtn.o\n-Wl,-dynamic-linker,{ld_musl}\n")
+                musl_static_cfg.write_text(f"{common_flags}-isystem {staging_dir}/usr/include\n-fuse-ld={lld_path}\n-nostdlib\n{lib_p}/Scrt1.o\n{lib_p}/crti.o\n-L{lib_p}\n-lc\n{lib_p}/crtn.o\n-Wl,-dynamic-linker,{ld_musl}\n")
 
             os.environ["CFLAGS"] = f"--config={musl_cfg} -pipe -D_FILE_OFFSET_BITS=64"
             os.environ["CXXFLAGS"] = f"--config={musl_cxx_cfg} -pipe -D_FILE_OFFSET_BITS=64"
