@@ -485,8 +485,20 @@ def main():
             target_dir.mkdir(parents=True, exist_ok=True)
             if skel_dir.exists():
                 print(f"[{arch}] Propagating skel contents...")
-                shutil.copytree(skel_dir, staging_dir, symlinks=True, dirs_exist_ok=True)
-                shutil.copytree(skel_dir, target_dir, symlinks=True, dirs_exist_ok=True)
+                import subprocess
+                # If staging/target exists from a previous run, ensure skel's symlinks (like lib -> usr/lib) 
+                # can overwrite any physical directories created by build tools.
+                for dest in [staging_dir, target_dir]:
+                    for item in os.listdir(skel_dir):
+                        s_item = skel_dir / item
+                        d_item = dest / item
+                        if d_item.exists() and s_item.is_symlink() and d_item.is_dir() and not d_item.is_symlink():
+                            print(f"[{arch}] Removing conflicting directory {d_item} to preserve skel symlink.")
+                            shutil.rmtree(d_item)
+
+                # Use cp -a --remove-destination to robustly merge skel onto existing staging/target
+                subprocess.run(["cp", "-a", "--remove-destination", f"{skel_dir}/.", str(staging_dir)], check=True)
+                subprocess.run(["cp", "-a", "--remove-destination", f"{skel_dir}/.", str(target_dir)], check=True)
 
             # Clean ALL target repos before build to avoid stale configs/artifacts between arches
             # This is critical for the kernel which relies on its .config in the source tree
