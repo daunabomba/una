@@ -198,7 +198,7 @@ def main():
     )
     parser.add_argument(
         "--save",
-        action="store_true",
+        metavar="tag",
         help="Stage all changes, commit with the provided message, then rebase and push for all repositories.",
     )
     parser.add_argument(
@@ -693,7 +693,8 @@ def main():
             print(f"Error during kernel execution: {e}")
             sys.exit(1)
 
-    if args.save or args.rebase:
+    tag = args.save
+    if tag or args.rebase:
         from git import Repo
         processed_dirs = set()
 
@@ -704,8 +705,8 @@ def main():
             top_repo = Repo(top_repo_path)
             # For top-level, we assume 'una' branch rebasing onto 'una/una'
             target_branch = "una/una" 
-            if args.save:
-                save_and_push(top_repo, target_branch, args.save, remote_name="una")
+            if tag:
+                save_and_push(top_repo, target_branch, tag, remote_name="una")
             elif args.rebase:
                 rebase_and_push(top_repo, target_branch, remote_name="una")
             processed_dirs.add(top_repo_path)
@@ -720,8 +721,8 @@ def main():
             repo = Repo(r_path)
             target_branch = f"origin/{cfg.get('branch', 'master')}"
             
-            if args.save:
-                save_and_push(repo, target_branch, args.save)
+            if tag:
+                save_and_push(repo, target_branch, tag)
             elif args.rebase:
                 rebase_and_push(repo, target_branch)
             processed_dirs.add(r_path)
