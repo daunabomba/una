@@ -719,7 +719,10 @@ def main():
             print(f"\n--- Repository: {cfg['name']} ({cfg['repo_dir']}) ---")
             repo = Repo(r_path)
             remote_prefix = "origin" if args.init_with_origin else "una"
-            target_branch = f"{remote_prefix}/{cfg.get('branch', 'master')}"
+            if remote_prefix == "una":
+                target_branch = "una/una"
+            else:
+                target_branch = f"origin/{cfg.get('branch', 'master')}"
             
             if tag:
                 save_and_push(repo, target_branch, tag)
