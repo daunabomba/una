@@ -463,12 +463,13 @@ def main():
     if args.build:
         print("Starting build process.")
         
+        all_possible_arches = ["x32", "x86_64", "aarch64", "riscv64"]
         host_repos = [r for r in repos_to_process if r["type"] == "host"]
         if host_repos and not args.no_build_host:
             print("\n--- Host Stage ---")
             for r in host_repos:
                 module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
-                if hasattr(module, "host_configure"): module.host_configure(host_install_dir, arches=arches)
+                if hasattr(module, "host_configure"): module.host_configure(host_install_dir, arches=all_possible_arches)
                 if hasattr(module, "host_build"): module.host_build(host_install_dir)
                 if hasattr(module, "host_install"): module.host_install(host_install_dir)
 
