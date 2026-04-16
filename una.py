@@ -12,6 +12,7 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 from mods.utils import init_or_reset_repo, rebase_and_push, save_and_push, get_target_triple, get_arch_flags
+from mods.snapshot import take_snapshot, compare_snapshots, write_report, get_report_paths
 
 bld_base = BASE_DIR / "bld"
 skel_dir = BASE_DIR / "skel"
@@ -38,6 +39,80 @@ def load_repo_una(repo_dir: str, una_file_name: str = "una.py"):
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
     return module
+
+
+class StepRunner:
+    def __init__(self, arch, staging_dir, target_dir):
+        self.arch = arch
+        self.staging_dir = staging_dir
+        self.target_dir = target_dir
+        self.component_snapshots = {} # name -> {staging: {}, target: {}}
+        self.cleaned_components = set()
+
+    def run_step(self, cfg, step_name, step_func, **kwargs):
+        name = cfg["name"]
+        print(f"[{self.arch}] Running {name}::{step_name}...")
+        
+        # 1. Cleanup and Pre-snapshot on first call for this component
+        if name not in self.cleaned_components:
+            report_file = bld_base / self.arch / "report" / f"{name}.txt"
+            if report_file.exists():
+                print(f"[{self.arch}] Cleaning up previous build outputs for {name}...")
+                paths = get_report_paths(report_file)
+                for p in paths:
+                    try:
+                        if p.startswith("staging/"):
+                            (self.staging_dir / p[8:]).unlink(missing_ok=True)
+                        elif p.startswith("target/"):
+                            (self.target_dir / p[7:]).unlink(missing_ok=True)
+                    except Exception as e:
+                        print(f"[{self.arch}] Warning: Failed to remove {p}: {e}")
+            
+            self.component_snapshots[name] = {
+                "staging": take_snapshot(self.staging_dir),
+                "target": take_snapshot(self.target_dir)
+            }
+            self.cleaned_components.add(name)
+
+        # 2. Execute step
+        step_func(self.staging_dir, self.target_dir, **kwargs)
+
+        # 3. Post-snapshot and report
+        pre = self.component_snapshots[name]
+        post_staging = take_snapshot(self.staging_dir)
+        post_target = take_snapshot(self.target_dir)
+        
+        added_s, mod_s, del_s = compare_snapshots(pre["staging"], post_staging)
+        added_t, mod_t, del_t = compare_snapshots(pre["target"], post_target)
+        
+        if mod_s or del_s:
+            print(f"[{self.arch}] ERROR: {name} modified or deleted files in staging!")
+        if mod_t or del_t:
+            print(f"[{self.arch}] ERROR: {name} modified or deleted files in target!")
+            
+        # Compile combined report
+        combined_added = {f"staging/{k}": v for k, v in added_s.items()}
+        combined_added.update({f"target/{k}": v for k, v in added_t.items()})
+        
+        combined_mod = {f"staging/{k}": v for k, v in mod_s.items()}
+        combined_mod.update({f"target/{k}": v for k, v in mod_t.items()})
+        
+        combined_del = {f"staging/{k}": v for k, v in del_s.items()}
+        combined_del.update({f"target/{k}": v for k, v in del_t.items()})
+        
+        report_file = bld_base / self.arch / "report" / f"{name}.txt"
+        write_report(combined_added, combined_mod, combined_del, report_file)
+
+
+def is_repo_dirty(repo_path: Path):
+    """
+    Check if a git repository has any modified or untracked files.
+    """
+    import subprocess
+    if not (repo_path / ".git").exists():
+        return False
+    result = subprocess.run(["git", "status", "--porcelain"], cwd=repo_path, capture_output=True, text=True)
+    return len(result.stdout.strip()) > 0
 
 
 def list_repos(repos, target_type=None):
@@ -213,6 +288,11 @@ def main():
         metavar="key=value",
 #-git-config core.sshCommand="ssh -i ~/.github.key -o IdentitiesOnly=yes"
         help="Pass a configuration parameter to git (e.g., --git-config core.sshCommand='...'). Can be specified multiple times.",
+    )
+    parser.add_argument(
+        "--clean",
+        action="store_true",
+        help="Remove all files produced by the build and clean the workspace repositories.",
     )
 
     args = parser.parse_args()
@@ -479,6 +559,7 @@ def main():
             arch_bld_dir = bld_base / arch
             staging_dir = arch_bld_dir / "staging"
             target_dir = arch_bld_dir / "target"
+            runner = StepRunner(arch, staging_dir, target_dir)
 
             # Ensure build directories exist and skel is propagated
             staging_dir.mkdir(parents=True, exist_ok=True)
@@ -515,6 +596,9 @@ def main():
                 
                 print(f"[{arch}] Cleaning {r['name']} ({r['repo_dir']})...")
                 import subprocess
+                if is_repo_dirty(r_path):
+                    print(f"[{arch}] ERROR: Repository {r['name']} is dirty. Please commit or stash changes before building.")
+                    sys.exit(1)
                 subprocess.run(["git", "clean", "-fdx"], cwd=r_path, check=True)
                 # Ensure submodules are also cleaned to avoid arch-mismatch in static libs (e.g. nsd -> simdzone)
                 if (r_path / ".gitmodules").exists():
@@ -571,35 +655,35 @@ def main():
                         kconfig = args.kconfig or BASE_DIR / "confs" / f"kernel.{arch}.config"
                         kwargs["kconfig"] = Path(kconfig).absolute()
 
-                    if hasattr(module, "target_configure"): module.target_configure(staging_dir, target_dir, **kwargs)
-                    if hasattr(module, "target_headers_install"): module.target_headers_install(staging_dir, target_dir, **kwargs)
+                    if hasattr(module, "target_configure"): runner.run_step(proj, "target_configure", module.target_configure, **kwargs)
+                    if hasattr(module, "target_headers_install"): runner.run_step(proj, "target_headers_install", module.target_headers_install, **kwargs)
 
             print(f"[{arch}] Target Phase 1: Core Base Library (musl)")
             musl_proj = next((r for r in all_target_repos if r["name"] == "musl"), None)
             if musl_proj:
                 module = load_repo_una(musl_proj["repo_dir"], musl_proj.get("una_file", "una.py"))
-                if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir, arch=arch)
-                if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir, arch=arch)
+                if hasattr(module, "target_build"): runner.run_step(musl_proj, "target_build", module.target_build, arch=arch)
+                if hasattr(module, "target_install"): runner.run_step(musl_proj, "target_install", module.target_install, arch=arch)
 
             base_repos = [r for r in target_configs_to_build if r["type"] == "base" and r["name"] != "musl"]
             if base_repos:
                 print(f"[{arch}] Target Phase 2: Base Components")
                 for r in base_repos:
                     module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
-                    if hasattr(module, "target_configure"): module.target_configure(staging_dir, target_dir, arch=arch)
-                    if hasattr(module, "target_headers_install"): module.target_headers_install(staging_dir, target_dir, arch=arch)
-                    if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir, arch=arch)
-                    if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir, arch=arch)
+                    if hasattr(module, "target_configure"): runner.run_step(r, "target_configure", module.target_configure, arch=arch)
+                    if hasattr(module, "target_headers_install"): runner.run_step(r, "target_headers_install", module.target_headers_install, arch=arch)
+                    if hasattr(module, "target_build"): runner.run_step(r, "target_build", module.target_build, arch=arch)
+                    if hasattr(module, "target_install"): runner.run_step(r, "target_install", module.target_install, arch=arch)
 
             other_repos = [r for r in target_configs_to_build if r["type"] == "other" and r["name"] != "linux"]
             if other_repos:
                 print(f"[{arch}] Target Phase 3: Other Components")
                 for r in other_repos:
                     module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
-                    if hasattr(module, "target_configure"): module.target_configure(staging_dir, target_dir, arch=arch)
-                    if hasattr(module, "target_headers_install"): module.target_headers_install(staging_dir, target_dir, arch=arch)
-                    if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir, arch=arch)
-                    if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir, arch=arch)
+                    if hasattr(module, "target_configure"): runner.run_step(r, "target_configure", module.target_configure, arch=arch)
+                    if hasattr(module, "target_headers_install"): runner.run_step(r, "target_headers_install", module.target_headers_install, arch=arch)
+                    if hasattr(module, "target_build"): runner.run_step(r, "target_build", module.target_build, arch=arch)
+                    if hasattr(module, "target_install"): runner.run_step(r, "target_install", module.target_install, arch=arch)
 
             # Ensure skel/etc overrides anything installed by components before kernel packing
             skel_etc = skel_dir / "etc"
@@ -618,8 +702,8 @@ def main():
                 kconfig = args.kconfig or BASE_DIR / "confs" / f"kernel.{arch}.config"
                 kconfig_path = Path(kconfig).absolute()
                 
-                if hasattr(module, "target_build"): module.target_build(staging_dir, target_dir, arch=arch, kconfig=kconfig_path)
-                if hasattr(module, "target_install"): module.target_install(staging_dir, target_dir, arch=arch, kconfig=kconfig_path)
+                if hasattr(module, "target_build"): runner.run_step(linux_proj, "target_build", module.target_build, arch=arch, kconfig=kconfig_path)
+                if hasattr(module, "target_install"): runner.run_step(linux_proj, "target_install", module.target_install, arch=arch, kconfig=kconfig_path)
 
                 # Export kernel image
                 if "kernel_image" in linux_proj:
@@ -641,6 +725,26 @@ def main():
                             shutil.copy(src_config, kconfig_path)
                     else:
                         print(f"[{arch}] Warning: No kernel image path defined for this architecture")
+
+        # Post-build cleanup for workspace repositories
+        print("\n--- Post-build Workspace Cleanup ---")
+        cleaned_dirs = set()
+        for r in repos:
+            r_path = Path(r["repo_dir"]).absolute()
+            if r_path in cleaned_dirs: continue
+            if r_path.exists() and (r_path / ".git").exists():
+                print(f"Cleaning {r['name']} ({r['repo_dir']})...")
+                if is_repo_dirty(r_path):
+                    print(f"ERROR: Repository {r['name']} is dirty. Skipping post-build cleanup for this repo.")
+                    continue
+                import subprocess
+                subprocess.run(["git", "clean", "-fdx"], cwd=r_path, check=True)
+                if (r_path / ".gitmodules").exists():
+                    try:
+                        subprocess.run(["git", "submodule", "foreach", "--recursive", "git", "clean", "-fdx"], cwd=r_path, check=True)
+                    except subprocess.CalledProcessError:
+                        pass
+                cleaned_dirs.add(r_path)
 
     if args.run:
         target_name = "linux"
@@ -785,6 +889,48 @@ def main():
             except Exception as e:
                 print(f"Error checking out tag '{tag_to_checkout}' in {cfg['name']}: {e}")
             processed_dirs.add(r_path)
+
+    if args.clean:
+        print("\n=== Global Cleanup ===")
+        import subprocess
+        
+        # 1. Clean build directory (staging and target, but keep reports?)
+        # User said "removes all files produced by the build".
+        # Reports are also produced by the build but useful for next build cleanup.
+        # Let's keep 'report' directory but clean staging/target.
+        for arch in arches:
+            arch_bld_dir = bld_base / arch
+            staging_dir = arch_bld_dir / "staging"
+            target_dir = arch_bld_dir / "target"
+            
+            if staging_dir.exists():
+                print(f"Cleaning {staging_dir}...")
+                shutil.rmtree(staging_dir)
+                staging_dir.mkdir(parents=True, exist_ok=True)
+            if target_dir.exists():
+                print(f"Cleaning {target_dir}...")
+                shutil.rmtree(target_dir)
+                target_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 2. Clean workspace sub-repos
+        cleaned_dirs = set()
+        for r in repos:
+            r_path = Path(r["repo_dir"]).absolute()
+            if r_path in cleaned_dirs: continue
+            if r_path.exists() and (r_path / ".git").exists():
+                print(f"Cleaning {r['name']} ({r['repo_dir']})...")
+                if is_repo_dirty(r_path):
+                    print(f"ERROR: Repository {r['name']} is dirty. Stopping global cleanup.")
+                    sys.exit(1)
+                subprocess.run(["git", "clean", "-fdx"], cwd=r_path, check=True)
+                cleaned_dirs.add(r_path)
+                
+        # 3. Clean top-level workspace (excluding reports, kernel images, and repos)
+        print("Cleaning top-level workspace...")
+        if is_repo_dirty(BASE_DIR):
+            print("ERROR: Top-level repository is dirty. Stopping global cleanup.")
+            sys.exit(1)
+        subprocess.run(["git", "clean", "-xfd", "-e", "bld/", "-e", "repo/"], cwd=BASE_DIR)
 
 
 if __name__ == "__main__":
