@@ -425,21 +425,29 @@ def main():
                 ld_musl = "/usr/lib/ld-musl-x86_64.so.1"
 
             musl_cfg = arch_bld_dir / "musl.cfg"
-            musl_cpp_cfg = arch_bld_dir / "muslc++.cfg"
+            musl_cxx_cfg = arch_bld_dir / "musl_c++.cfg"
             musl_static_cfg = arch_bld_dir / "musl_static.cfg"
             
-            if not musl_cfg.exists() or not musl_cpp_cfg.exists() or not musl_static_cfg.exists():
-                print(f"Generating compiler configurations for {arch}...")
+            if not musl_cfg.exists() or not musl_cxx_cfg.exists() or not musl_static_cfg.exists():
+                print(f"[{arch}] Generating compiler configurations...")
+                arch_bld_dir.mkdir(parents=True, exist_ok=True)
                 lld_path = host_install_dir / "bin" / "ld.lld"
                 lib_p = staging_dir / "usr" / "lib"
+                
+                # Common flags
+                common_flags = f"--target={target_triple}\n--sysroot={staging_dir}\n-isystem {staging_dir}/usr/include\n-fPIE\n{march}\n"
+                
                 # Pure C Config
-                musl_cfg.write_text(f"--target={target_triple}\n--sysroot={staging_dir}\n-isystem {staging_dir}/usr/include\n-fuse-ld={lld_path}\n-nostdlib\n-L{staging_dir}/usr/lib\n-lc\n-Wl,-dynamic-linker,{ld_musl}\n-fPIE\n{march}\n")
+                musl_cfg.write_text(f"{common_flags}-fuse-ld={lld_path}\n-nostdlib\n-L{staging_dir}/usr/lib\n-lc\n-Wl,-dynamic-linker,{ld_musl}\n")
+                
                 # C++ Config
-                musl_cpp_cfg.write_text(f"--target={target_triple}\n--sysroot={staging_dir}\n-isystem {staging_dir}/usr/include/c++/v1\n-isystem {staging_dir}/usr/include\n--ld-path={lld_path}\n-nostdlib\n{lib_p}/Scrt1.o\n{lib_p}/crti.o\n-L{lib_p}\n-lc++\n-lc++abi\n-lunwind\n-lc\n{lib_p}/crtn.o\n-Wl,-dynamic-linker,{ld_musl}\n-fPIE\n{march}\n")
-                musl_static_cfg.write_text(f"--target={target_triple}\n--sysroot={staging_dir}\n-isystem {staging_dir}/usr/include\n-fuse-ld={lld_path}\n-nostdlib\n{lib_p}/Scrt1.o\n{lib_p}/crti.o\n-L{lib_p}\n-lc\n{lib_p}/crtn.o\n-Wl,-dynamic-linker,{ld_musl}\n-fPIE\n{march}\n")
+                musl_cxx_cfg.write_text(f"{common_flags}-isystem {staging_dir}/usr/include/c++/v1\n--ld-path={lld_path}\n-nostdlib\n{lib_p}/Scrt1.o\n{lib_p}/crti.o\n-L{lib_p}\n-lc++\n-lc++abi\n-lunwind\n-lc\n{lib_p}/crtn.o\n-Wl,-dynamic-linker,{ld_musl}\n")
+                
+                # Static Config
+                musl_static_cfg.write_text(f"{common_flags}-fuse-ld={lld_path}\n-nostdlib\n{lib_p}/Scrt1.o\n{lib_p}/crti.o\n-L{lib_p}\n-lc\n{lib_p}/crtn.o\n-Wl,-dynamic-linker,{ld_musl}\n")
 
             os.environ["CFLAGS"] = f"--config={musl_cfg} -pipe -D_FILE_OFFSET_BITS=64"
-            os.environ["CXXFLAGS"] = f"--config={musl_cpp_cfg} -pipe -D_FILE_OFFSET_BITS=64"
+            os.environ["CXXFLAGS"] = f"--config={musl_cxx_cfg} -pipe -D_FILE_OFFSET_BITS=64"
             os.environ["CFLAGS_STATIC"] = f"--config={musl_static_cfg} -pipe -D_FILE_OFFSET_BITS=64"
 
             all_target_repos = [r for r in repos if r["type"] in ["base", "other"]]
@@ -550,7 +558,7 @@ def main():
                 "qemu-system-x86_64", "-enable-kvm", "-m", "1G", "-machine", "q35", "-cpu", "host",
                 "-drive", "if=pflash,format=raw,readonly=on,file=/etc/bios/OVMF.fd",
                 "-serial", "mon:stdio",
-                "-netdev", "user,id=vmnic,restrict=n", "-device", "virtio-net-pci,romfile=,netdev=vmnic",
+                "-netdev", "user,id=vmnic,restrict=n,hostfwd=tcp::2022-:22", "-device", "virtio-net-pci,romfile=,netdev=vmnic",
                 "-nodefaults", "-nographic",
                 "-kernel", str(kernel_img), "-append", "console=ttyS0"
             ],
