@@ -188,10 +188,6 @@ def main():
         help="Run the default kernel using emulation for specified architecture.",
     )
     parser.add_argument(
-        "--tag",
-        help="A specific tag to checkout during initialization.",
-    )
-    parser.add_argument(
         "--status",
         action="store_true",
         help="Show git status for the top-level repo and all sub-repositories.",
@@ -205,6 +201,11 @@ def main():
         "--create-disk",
         action="store_true",
         help="Create a shared 1G test disk in the bld directory.",
+    )
+    parser.add_argument(
+        "--checkout",
+        metavar="tag",
+        help="Checkout a specific tag in all repositories.",
     )
 
     args = parser.parse_args()
@@ -432,19 +433,6 @@ def main():
                     print(f"Propagating skel contents to {arch} staging and target directories...")
                     shutil.copytree(skel_dir, staging_dir, symlinks=True, dirs_exist_ok=True)
                     shutil.copytree(skel_dir, target_dir, symlinks=True, dirs_exist_ok=True)
-            
-        # Handle top-level repository if a tag is specified
-        if args.tag:
-            from git import Repo
-            top_repo_path = BASE_DIR
-            print(f"Checking out tag '{args.tag}' for top-level repository (una)...")
-            top_repo = Repo(top_repo_path)
-            top_repo.remotes.una.fetch(tags=True)
-            try:
-                top_repo.git.checkout(args.tag)
-            except Exception as e:
-                print(f"Error checking out tag '{args.tag}' for top-level repo: {e}")
-                sys.exit(1)
         
         initialized_dirs = set()
         for cfg in repos_to_process:
@@ -455,7 +443,6 @@ def main():
                 repo_dir=repo_dir, 
                 origin_url=cfg["origin_url"], 
                 una_url=cfg["una_url"], 
-                tag=args.tag,
                 with_origin=args.init_with_origin
             )
             initialized_dirs.add(repo_dir)
@@ -729,6 +716,41 @@ def main():
                 save_and_push(repo, target_branch, tag)
             elif args.rebase:
                 rebase_and_push(repo, target_branch)
+            processed_dirs.add(r_path)
+
+    if args.checkout:
+        from git import Repo
+        tag_to_checkout = args.checkout
+        processed_dirs = set()
+
+        # Handle top-level repository
+        top_repo_path = BASE_DIR
+        if top_repo_path not in processed_dirs:
+            print(f"\n--- Top-level Repository (una) ---")
+            top_repo = Repo(top_repo_path)
+            print(f"Fetching tags for top-level repo...")
+            top_repo.remotes.una.fetch(tags=True)
+            print(f"Checking out tag '{tag_to_checkout}'...")
+            try:
+                top_repo.git.checkout(tag_to_checkout)
+            except Exception as e:
+                print(f"Error checking out tag '{tag_to_checkout}' in top-level repo: {e}")
+            processed_dirs.add(top_repo_path)
+
+        # Handle sub-repositories
+        for cfg in repos_to_process:
+            r_path = Path(cfg["repo_dir"]).absolute()
+            if r_path in processed_dirs: continue
+            
+            print(f"\n--- Repository: {cfg['name']} ({cfg['repo_dir']}) ---")
+            repo = Repo(r_path)
+            print(f"Fetching tags...")
+            repo.remotes.una.fetch(tags=True)
+            print(f"Checking out tag '{tag_to_checkout}'...")
+            try:
+                repo.git.checkout(tag_to_checkout)
+            except Exception as e:
+                print(f"Error checking out tag '{tag_to_checkout}' in {cfg['name']}: {e}")
             processed_dirs.add(r_path)
 
 
