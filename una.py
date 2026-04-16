@@ -465,10 +465,13 @@ def main():
             staging_dir = arch_bld_dir / "staging"
             target_dir = arch_bld_dir / "target"
 
-            # Clean target repos before build
+            # Clean ALL target repos before build to avoid stale configs/artifacts between arches
+            # This is critical for the kernel which relies on its .config in the source tree
             cleaned_dirs = set()
             host_dirs = {Path(r["repo_dir"]).absolute() for r in repos if r["type"] == "host"}
-            for r in target_configs_to_build:
+            all_target_repos = [r for r in repos if r["type"] in ["base", "other"]]
+            
+            for r in all_target_repos:
                 r_path = Path(r["repo_dir"]).absolute()
                 if r_path in cleaned_dirs: continue
                 if r_path in host_dirs:
