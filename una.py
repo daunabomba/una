@@ -209,14 +209,18 @@ def main():
     )
     parser.add_argument(
         "--git-config",
-        help="Path to a global Git configuration file to use for all operations.",
+        action="append",
+        metavar="key=value",
+#-git-config core.sshCommand="ssh -i ~/.github.key -o IdentitiesOnly=yes"
+        help="Pass a configuration parameter to git (e.g., --git-config core.sshCommand='...'). Can be specified multiple times.",
     )
 
     args = parser.parse_args()
     
     if args.git_config:
-        os.environ["GIT_CONFIG_GLOBAL"] = os.path.abspath(os.path.expanduser(args.git_config))
-        os.environ["GIT_CONFIG_NOSYSTEM"] = "1" # Optional: ensure purity
+        # GIT_CONFIG_PARAMETERS expects a space-separated list of 'key=value' strings
+        # we wrap each in single quotes to handle spaces within values
+        os.environ["GIT_CONFIG_PARAMETERS"] = " ".join([f"'{c}'" for c in args.git_config])
     
     arches = [a.strip() for a in args.arch.split(",")]
     host_install_dir = bld_base / "host"
