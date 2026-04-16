@@ -246,6 +246,7 @@ def main():
             "una_repo": "llvm-project.git",
             "repo_dir": BASE_DIR / "repo/llvm",
             "una_file": "una/host.py",
+#            "origin_url": "/mnt/work/bld/llvm-project.git",
             "origin_url": "https://github.com/llvm/llvm-project.git",
             "type": "host",
             "branch": "main",
@@ -255,6 +256,7 @@ def main():
             "name": "musl",
             "una_repo": "musl.git",
             "repo_dir": BASE_DIR / "repo/musl",
+#            "origin_url": "/mnt/work/bld/musl.git",
             "origin_url": "https://git.musl-libc.org/git/musl",
             "type": "base",
             "branch": "master",
@@ -265,6 +267,7 @@ def main():
             "una_repo": "llvm-project.git",
             "repo_dir": BASE_DIR / "repo/llvm",
             "una_file": "una/runtime.py",
+#            "origin_url": "/mnt/work/bld/llvm-project.git",
             "origin_url": "https://github.com/llvm/llvm-project.git",
             "type": "base",
             "branch": "main",
@@ -274,6 +277,7 @@ def main():
             "name": "busybox",
             "una_repo": "busybox.git",
             "repo_dir": BASE_DIR / "repo/busybox",
+#            "origin_url": "/mnt/work/bld/busybox.git",
             "origin_url": "https://git.busybox.net/busybox",
             "type": "other",
             "branch": "master",
@@ -283,6 +287,7 @@ def main():
             "name": "openssl",
             "una_repo": "openssl.git",
             "repo_dir": BASE_DIR / "repo/openssl",
+#            "origin_url": "/mnt/work/bld/openssl.git",
             "origin_url": "https://github.com/openssl/openssl.git",
             "type": "other",
             "branch": "master",
@@ -355,6 +360,7 @@ def main():
             "name": "linux",
             "una_repo": "linux.git",
             "repo_dir": BASE_DIR / "repo/kernel",
+#            "origin_url": "/mnt/work/bld/linux-stable.git",
             "origin_url": "https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable.git",
             "type": "other",
             "branch": "master",
@@ -440,11 +446,6 @@ def main():
                 host_install_dir.mkdir(parents=True, exist_ok=True)
                 staging_dir.mkdir(parents=True, exist_ok=True)
                 target_dir.mkdir(parents=True, exist_ok=True)
-    
-                if skel_dir.exists():
-                    print(f"Propagating skel contents to {arch} staging and target directories...")
-                    shutil.copytree(skel_dir, staging_dir, symlinks=True, dirs_exist_ok=True)
-                    shutil.copytree(skel_dir, target_dir, symlinks=True, dirs_exist_ok=True)
         
         initialized_dirs = set()
         for cfg in repos_to_process:
@@ -478,6 +479,14 @@ def main():
             arch_bld_dir = bld_base / arch
             staging_dir = arch_bld_dir / "staging"
             target_dir = arch_bld_dir / "target"
+
+            # Ensure build directories exist and skel is propagated
+            staging_dir.mkdir(parents=True, exist_ok=True)
+            target_dir.mkdir(parents=True, exist_ok=True)
+            if skel_dir.exists():
+                print(f"[{arch}] Propagating skel contents...")
+                shutil.copytree(skel_dir, staging_dir, symlinks=True, dirs_exist_ok=True)
+                shutil.copytree(skel_dir, target_dir, symlinks=True, dirs_exist_ok=True)
 
             # Clean ALL target repos before build to avoid stale configs/artifacts between arches
             # This is critical for the kernel which relies on its .config in the source tree
