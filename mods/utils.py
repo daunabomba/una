@@ -143,24 +143,25 @@ def rebase_and_push(repo: Repo, branch_name: str, remote_name: str = remote_una_
     repo.remotes[remote_name].push(refspec, force=True, progress=TqdmProgress())
 
 
-def save_and_push(repo: Repo, branch_name: str, message: str, remote_name: str = remote_una_name):
+def save_and_push(repo: Repo, branch_name: str, tag: str, remote_name: str = remote_una_name):
     print(f"Staging all changes in {repo.working_dir}...")
     repo.git.add(A=True)
     
     try:
-        print(f"Committing with message: {message}")
-        repo.git.commit("-m", message)
+        print(f"Committing with message: {tag}")
+        repo.git.commit("-m", tag)
     except Exception as e:
         print(f"Nothing to commit or commit failed: {e}")
 
-    # Create and push tag
-    print(f"Creating tag: {message}")
-    repo.create_tag(message, force=True)
-    
+    # Rebase and push the branch first
     rebase_and_push(repo, branch_name, remote_name=remote_name)
     
-    print(f"Pushing tag '{message}' to {remote_name}...")
-    repo.remotes[remote_name].push(f"refs/tags/{message}:refs/tags/{message}", force=True)
+    # Create and push tag on the final result
+    print(f"Creating tag: {tag}")
+    repo.create_tag(tag, force=True)
+    
+    print(f"Pushing tag '{tag}' to {remote_name}...")
+    repo.remotes[remote_name].push(f"refs/tags/{tag}:refs/tags/{tag}", force=True)
 
 
 def get_target_triple(arch: str) -> str:

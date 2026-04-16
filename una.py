@@ -713,7 +713,6 @@ def main():
 
         # Handle sub-repositories
         for cfg in repos_to_process:
-            if not cfg.get("rebase", False): continue
             r_path = Path(cfg["repo_dir"]).absolute()
             if r_path in processed_dirs: continue
             
