@@ -44,7 +44,7 @@ def take_snapshot(directory: Path):
             stat = full_path.lstat()
             snapshot[str(rel_path)] = {
                 "type": ftype,
-                "perm": oct(stat.st_mode & 0o777),
+                "perm": f"{stat.st_mode & 0o777:o}",
                 "hash": fhash
             }
     return snapshot
