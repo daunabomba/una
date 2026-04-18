@@ -512,7 +512,7 @@ def main():
             "name": "linux-image", 
             "una_repo": "linux.git",
             "repo_dir": BASE_DIR / "repo/kernel",
-            "una_file": "una/image.py",
+            "una_file": "una/kernel.py",
             "origin_url": "/mnt/work/bld/linux-stable.git",
 #            "origin_url": "https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable.git",
             "type": "other",  # Phase 4: final image
@@ -615,7 +615,6 @@ def main():
 
     if args.build:
         print("Starting build process.")
-        
         all_possible_arches = ["x32", "x86_64", "aarch64", "riscv64"]
         host_repos = [r for r in repos_to_process if r["type"] == "host"]
         if host_repos and not args.no_build_host:
@@ -715,7 +714,7 @@ def main():
             print(f"[{arch}] Target Phase 0: System Headers (musl & linux-headers)")
             for name in ["musl", "linux-headers"]:
                 proj = next((r for r in all_target_repos if r["name"] == name), None)
-                if proj:
+                if proj and ((not args.build) or args.build == "ALL" or args.build == proj["name"]):
                     module = load_repo_una(proj["repo_dir"], proj.get("una_file", "una.py"))
                     kwargs = {"arch": arch}
                     if proj["name"] == "linux-headers":
@@ -727,7 +726,7 @@ def main():
 
             print(f"[{arch}] Target Phase 1: Core Base Library (musl)")
             musl_proj = next((r for r in all_target_repos if r["name"] == "musl"), None)
-            if musl_proj:
+            if musl_proj and ((not args.build) or args.build == "ALL" or args.build == musl_proj["name"]):
                 module = load_repo_una(musl_proj["repo_dir"], musl_proj.get("una_file", "una.py"))
                 if hasattr(module, "target_build"): runner.run_step(musl_proj, "target_build", module.target_build, arch=arch)
                 if hasattr(module, "target_install"): runner.run_step(musl_proj, "target_install", module.target_install, arch=arch)
@@ -739,21 +738,24 @@ def main():
             if base_repos:
                 print(f"[{arch}] Target Phase 2: Base Components")
                 for r in base_repos:
-                    module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
-                    if hasattr(module, "target_configure"): runner.run_step(r, "target_configure", module.target_configure, arch=arch)
-                    if hasattr(module, "target_headers_install"): runner.run_step(r, "target_headers_install", module.target_headers_install, arch=arch)
-                    if hasattr(module, "target_build"): runner.run_step(r, "target_build", module.target_build, arch=arch)
-                    if hasattr(module, "target_install"): runner.run_step(r, "target_install", module.target_install, arch=arch)
+                    if r and ((not args.build) or args.build == "ALL" or args.build == r["name"]):
+                        module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
+                        print(f"[{arch}] [{module}]")
+                        if hasattr(module, "target_configure"): runner.run_step(r, "target_configure", module.target_configure, arch=arch)
+                        if hasattr(module, "target_headers_install"): runner.run_step(r, "target_headers_install", module.target_headers_install, arch=arch)
+                        if hasattr(module, "target_build"): runner.run_step(r, "target_build", module.target_build, arch=arch)
+                        if hasattr(module, "target_install"): runner.run_step(r, "target_install", module.target_install, arch=arch)
 
-            other_repos = [r for r in target_configs_to_build if r["type"] == "other" and r["name"] != "linux"]
+            print(f"[{arch}] Target Phase 3: Other Components")
+            other_repos = [r for r in target_configs_to_build if r["type"] == "other" and r["name"] != "linux-image"]
             if other_repos:
-                print(f"[{arch}] Target Phase 3: Other Components")
                 for r in other_repos:
-                    module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
-                    if hasattr(module, "target_configure"): runner.run_step(r, "target_configure", module.target_configure, arch=arch)
-                    if hasattr(module, "target_headers_install"): runner.run_step(r, "target_headers_install", module.target_headers_install, arch=arch)
-                    if hasattr(module, "target_build"): runner.run_step(r, "target_build", module.target_build, arch=arch)
-                    if hasattr(module, "target_install"): runner.run_step(r, "target_install", module.target_install, arch=arch)
+                    if r and ((not args.build) or args.build == "ALL" or args.build == r["name"]):
+                        module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
+                        if hasattr(module, "target_configure"): runner.run_step(r, "target_configure", module.target_configure, arch=arch)
+                        if hasattr(module, "target_headers_install"): runner.run_step(r, "target_headers_install", module.target_headers_install, arch=arch)
+                        if hasattr(module, "target_build"): runner.run_step(r, "target_build", module.target_build, arch=arch)
+                        if hasattr(module, "target_install"): runner.run_step(r, "target_install", module.target_install, arch=arch)
 
             # Ensure skel/etc overrides anything installed by components before kernel packing
             skel_etc = skel_dir / "etc"
@@ -764,7 +766,7 @@ def main():
                 shutil.copytree(skel_etc, staging_dir / "etc", symlinks=True)
                 shutil.copytree(skel_etc, target_dir / "etc", symlinks=True)
 
-            linux_proj = next((r for r in target_configs_to_build if r["name"] == "linux"), None)
+            linux_proj = next((r for r in target_configs_to_build if r["name"] == "linux-image"), None)
             if linux_proj:
                 print(f"[{arch}] Target Phase 4: Kernel Finalization")
                 module = load_repo_una(linux_proj["repo_dir"], linux_proj.get("una_file", "una.py"))
@@ -772,6 +774,7 @@ def main():
                 kconfig = args.kconfig or BASE_DIR / "confs" / f"kernel.{arch}.config"
                 kconfig_path = Path(kconfig).absolute()
                 
+                if hasattr(module, "target_configure"): runner.run_step(r, "target_configure", module.target_configure, arch=arch, kconfig=kconfig_path)
                 if hasattr(module, "target_build"): runner.run_step(linux_proj, "target_build", module.target_build, arch=arch, kconfig=kconfig_path)
                 if hasattr(module, "target_install"): runner.run_step(linux_proj, "target_install", module.target_install, arch=arch, kconfig=kconfig_path)
 
