@@ -380,17 +380,17 @@ def main():
             "branch": "main",
             "rebase": True,
         },
-        {
-            "name": "rust",
-            "una_repo": "rust.git", 
-            "repo_dir": BASE_DIR / "repo/rust",
-            "una_file": "una.py",
-            "origin_url": "/mnt/work/bld/rust.git",
+#        {
+#            "name": "rust",
+#            "una_repo": "rust.git", 
+#            "repo_dir": BASE_DIR / "repo/rust",
+#            "una_file": "una.py",
+#            "origin_url": "/mnt/work/bld/rust.git",
 #            "origin_url": "https://github.com/rust-lang/rust.git",
-            "type": "host",
-            "branch": "master",
-            "rebase": True,
-        },
+#            "type": "host",
+#            "branch": "master",
+#            "rebase": True,
+#        },
         {
             "name": "linux-headers",
             "una_repo": "linux.git", 
@@ -510,7 +510,6 @@ def main():
             "name": "linux-image", 
             "una_repo": "linux.git",
             "repo_dir": BASE_DIR / "repo/kernel",
-            **same repo** → shared source tree!
             "una_file": "una/image.py",
             "origin_url": "/mnt/work/bld/linux-stable.git",
 #            "origin_url": "https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable.git",
@@ -711,13 +710,13 @@ def main():
 
             all_target_repos = [r for r in repos if r["type"] in ["base", "other"]]
 
-            print(f"[{arch}] Target Phase 0: System Headers (musl & linux)")
-            for name in ["musl", "linux"]:
+            print(f"[{arch}] Target Phase 0: System Headers (musl & linux-headers)")
+            for name in ["musl", "linux-headers"]:
                 proj = next((r for r in all_target_repos if r["name"] == name), None)
                 if proj:
                     module = load_repo_una(proj["repo_dir"], proj.get("una_file", "una.py"))
                     kwargs = {"arch": arch}
-                    if proj["name"] == "linux":
+                    if proj["name"] == "linux-headers":
                         kconfig = args.kconfig or BASE_DIR / "confs" / f"kernel.{arch}.config"
                         kwargs["kconfig"] = Path(kconfig).absolute()
 
@@ -813,7 +812,7 @@ def main():
                 cleaned_dirs.add(r_path)
 
     if args.run:
-        target_name = "linux"
+        target_name = "linux-image"
         proj = next((r for r in repos if r["name"] == target_name), None)
         if not proj:
             print(f"Error: Component '{target_name}' not found.")
