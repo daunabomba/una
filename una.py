@@ -234,24 +234,26 @@ def create_test_disk(disk_path):
         if p2_img.exists(): p2_img.unlink()
 
 def propagate_skel(staging_dir, target_dir):
-    """Atomic skel propagation using rsync for snapshot verification"""
+    """Skel propagation using original file-by-file method + snapshot verification"""
     import subprocess
-    print("Propagating skeleton with rsync...")
-    
-    # Clean slate
+
+    print("Propagating skeleton (original method)...")
+
     for dest in [staging_dir, target_dir]:
-        shutil.rmtree(dest, ignore_errors=True)
-        dest.mkdir(parents=True, exist_ok=True)
-    
-    # Atomic rsync (preserves symlinks, deletes extras, verifies exactly)
-    subprocess.run([
-        "rsync", "-aH", "--delete", "--force", "--checksum",
-        f"{skel_dir}/", f"{staging_dir}/"
-    ], check=True)
-    subprocess.run([
-        "rsync", "-aH", "--delete", "--force", "--checksum", 
-        f"{skel_dir}/", f"{target_dir}/"
-    ], check=True)
+        # ORIGINAL logic: Handle ONLY symlink/dir conflicts
+        for item in os.listdir(skel_dir):
+            s_item = skel_dir / item
+            d_item = dest / item
+
+            if d_item.exists() and s_item.is_symlink() and d_item.is_dir() and not d_item.is_symlink():
+                print(f"Removing conflicting directory {d_item} to preserve skel symlink.")
+                shutil.rmtree(d_item)
+
+        # ORIGINAL cp -a --remove-destination (robust merge)
+        subprocess.run([
+            "cp", "-a", "--remove-destination",
+            f"{skel_dir}/.", str(dest)
+        ], check=True)
 
 def main():
     parser = argparse.ArgumentParser(
@@ -730,7 +732,10 @@ def main():
                 if hasattr(module, "target_build"): runner.run_step(musl_proj, "target_build", module.target_build, arch=arch)
                 if hasattr(module, "target_install"): runner.run_step(musl_proj, "target_install", module.target_install, arch=arch)
 
-            base_repos = [r for r in target_configs_to_build if r["type"] == "base" and r["name"] != "musl"]
+            base_repos = [
+                   r for r in target_configs_to_build
+                   if r["type"] == "base" and r["name"] not in ("musl", "linux-headers")
+            ]
             if base_repos:
                 print(f"[{arch}] Target Phase 2: Base Components")
                 for r in base_repos:
