@@ -348,9 +348,16 @@ def main():
     args = parser.parse_args()
     
     if args.git_config:
-        # GIT_CONFIG_PARAMETERS expects a space-separated list of 'key=value' strings
-        # we wrap each in single quotes to handle spaces within values
-        os.environ["GIT_CONFIG_PARAMETERS"] = " ".join([f"'{c}'" for c in args.git_config])
+        config_pairs = [f"'{c}'" for c in args.git_config]
+    else:
+        config_pairs = []
+
+    # Always add sparse‑checkout defaults
+    config_pairs.append("'core.sparseCheckout=true'")
+    config_pairs.append("'index.sparse=true'")
+    config_pairs.append("'core.sparseCheckoutCone=false'")
+
+    os.environ["GIT_CONFIG_PARAMETERS"] = " ".join(config_pairs)
     
     arches = [a.strip() for a in args.arch.split(",")]
     host_install_dir = bld_base / "host"
@@ -381,6 +388,7 @@ def main():
             "type": "host",
             "branch": "main",
             "rebase": True,
+            "sparse_ignore_dirs": [],
         },
 #        {
 #            "name": "rust",
@@ -392,6 +400,7 @@ def main():
 #            "type": "host",
 #            "branch": "master",
 #            "rebase": True,
+#            "sparse_ignore_dirs": [],
 #        },
         {
             "name": "linux-headers",
@@ -403,6 +412,7 @@ def main():
             "type": "base", 
             "branch": "master",
             "rebase": True,
+            "sparse_ignore_dirs": ["Documentation", "arch/arm/boot/dts"],
         },
         {
             "name": "musl",
@@ -413,6 +423,7 @@ def main():
             "type": "base",
             "branch": "master",
             "rebase": True,
+            "sparse_ignore_dirs": [],
         },
         {
             "name": "llvm-runtime",
@@ -424,6 +435,7 @@ def main():
             "type": "base",
             "branch": "main",
             "rebase": True,
+            "sparse_ignore_dirs": [],
         },
         {
             "name": "busybox",
@@ -434,6 +446,7 @@ def main():
             "type": "other",
             "branch": "master",
             "rebase": True,
+            "sparse_ignore_dirs": [],
         },
         {
             "name": "openssl",
@@ -444,6 +457,7 @@ def main():
             "type": "other",
             "branch": "master",
             "rebase": True,
+            "sparse_ignore_dirs": [],
         },
         {
             "name": "nsd",
@@ -453,6 +467,7 @@ def main():
             "type": "other",
             "branch": "master",
             "rebase": True,
+            "sparse_ignore_dirs": [],
         },
         {
             "name": "mxmux",
@@ -462,6 +477,7 @@ def main():
             "type": "other",
             "branch": "master",
             "rebase": False,
+            "sparse_ignore_dirs": [],
         },
         {
             "name": "dropbear",
@@ -471,6 +487,7 @@ def main():
             "type": "other",
             "branch": "master",
             "rebase": True,
+            "sparse_ignore_dirs": [],
         },
         {
             "name": "wireguard-tools",
@@ -480,8 +497,9 @@ def main():
             "type": "other",
             "branch": "master",
             "rebase": True,
+            "sparse_ignore_dirs": [],
         },
-                {
+        {
             "name": "libmnl",
             "una_repo": "libmnl.git",
             "repo_dir": BASE_DIR / "repo/libmnl",
@@ -489,6 +507,7 @@ def main():
             "type": "base",
             "branch": "master",
             "rebase": True,
+            "sparse_ignore_dirs": [],
         },
         {
             "name": "libnftnl",
@@ -498,6 +517,7 @@ def main():
             "type": "base",
             "branch": "master",
             "rebase": True,
+            "sparse_ignore_dirs": [],
         },
         {
             "name": "nftables",
@@ -507,6 +527,7 @@ def main():
             "type": "other",
             "branch": "master",
             "rebase": True,
+            "sparse_ignore_dirs": [],
         },
         {
             "name": "linux-image", 
@@ -524,6 +545,7 @@ def main():
                 "aarch64": "arch/arm64/boot/Image.gz",
                 "riscv64": "arch/riscv/boot/Image",
             },
+            "sparse_ignore_dirs": ["Documentation", "arch/arm/boot/dts"],
         },
     ]
 
@@ -609,6 +631,7 @@ def main():
                 repo_dir=repo_dir, 
                 origin_url=cfg["origin_url"], 
                 una_url=cfg["una_url"], 
+                sparse_ignore_dirs=cfg["sparse_ignore_dirs"],
                 with_origin=args.init_with_origin
             )
             initialized_dirs.add(repo_dir)

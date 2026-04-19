@@ -37,7 +37,7 @@ class TqdmProgress(RemoteProgress):
                 pass
 
 
-def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, with_origin: bool = True) -> Repo:
+def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, sparse_ignore_dirs: str, with_origin: bool = True) -> Repo:
     print(f"Initializing repo: {repo_dir}")
     if not os.path.exists(repo_dir):
         clone_url = origin_url if with_origin else una_url
@@ -66,6 +66,19 @@ def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, with_origin
         repo.create_remote(remote_una_name, una_url)
     else:
         repo.remotes[remote_una_name].set_url(una_url)
+
+    if sparse_ignore_dirs:
+        print(f"Sparse-checkout ignoring dirs in {repo_dir}: {sparse_ignore_dirs}")
+        repo.git.sparse_checkout("init")
+        
+        sparse_file = os.path.join(repo_dir, ".git", "info", "sparse-checkout")
+        with open(sparse_file, "w") as f:
+            f.write("/*\n")  # CORRECT: Normal newline
+            for ignore_dir in sparse_ignore_dirs:
+                dir_pattern = ignore_dir.rstrip('/') + '/' if not ignore_dir.endswith('/') else ignore_dir
+                f.write(f"!{dir_pattern}\n")
+        
+        repo.git.sparse_checkout("reapply")
 
     print("Setting fetch refspec for una...")
     repo.git.config(f"remote.{remote_una_name}.fetch", f"+refs/heads/*:refs/remotes/{remote_una_name}/*")
