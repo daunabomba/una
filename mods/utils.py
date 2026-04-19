@@ -138,10 +138,11 @@ def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, sparse_igno
     return repo
 
 
-def rebase_and_push(repo: Repo, branch_name: str, remote_name: str = remote_una_name):
+def rebase_and_push(repo: Repo, branch_name: str, remote_name: str = remote_una_name, rebase: bool = True):
     print(f"Rebasing current branch upon {branch_name}...")
     # These will raise exceptions on failure, which will stop the script
-    repo.git.rebase(branch_name)
+    if rebase:
+        repo.git.rebase(branch_name)
 
     print("Creating automatic rebase commit...")
     # allow-empty to ensure we always have the 'rebase' marker if requested

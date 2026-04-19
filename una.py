@@ -948,7 +948,7 @@ def main():
             if tag:
                 save_and_push(repo, target_branch, tag)
             elif args.rebase:
-                rebase_and_push(repo, target_branch)
+                rebase_and_push(repo, target_branch, rebase = cfg['rebase'])
             processed_dirs.add(r_path)
 
     if args.checkout:
