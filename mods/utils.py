@@ -69,6 +69,9 @@ def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, sparse_igno
 
     if sparse_ignore_dirs:
         print(f"Sparse-checkout ignoring dirs in {repo_dir}: {sparse_ignore_dirs}")
+        repo.config_writer().set_value("core", "sparseCheckout", "true").release()
+        repo.config_writer().set_value("core", "sparseCheckoutCone", "false").release()
+        repo.config_writer().set_value("index", "sparse", "true").release()
         repo.git.sparse_checkout("init")
         
         sparse_file = os.path.join(repo_dir, ".git", "info", "sparse-checkout")

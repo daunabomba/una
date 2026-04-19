@@ -333,31 +333,12 @@ def main():
         help="Checkout a specific tag in all repositories.",
     )
     parser.add_argument(
-        "--git-config",
-        action="append",
-        metavar="key=value",
-#-git-config core.sshCommand="ssh -i ~/.github.key -o IdentitiesOnly=yes"
-        help="Pass a configuration parameter to git (e.g., --git-config core.sshCommand='...'). Can be specified multiple times.",
-    )
-    parser.add_argument(
         "--clean",
         action="store_true",
         help="Remove all files produced by the build and clean the workspace repositories.",
     )
 
     args = parser.parse_args()
-    
-    if args.git_config:
-        config_pairs = [f"'{c}'" for c in args.git_config]
-    else:
-        config_pairs = []
-
-    # Always add sparse‑checkout defaults
-    config_pairs.append("'core.sparseCheckout=true'")
-    config_pairs.append("'index.sparse=true'")
-    config_pairs.append("'core.sparseCheckoutCone=false'")
-
-    os.environ["GIT_CONFIG_PARAMETERS"] = " ".join(config_pairs)
     
     arches = [a.strip() for a in args.arch.split(",")]
     host_install_dir = bld_base / "host"
@@ -388,7 +369,7 @@ def main():
             "type": "host",
             "branch": "main",
             "rebase": True,
-            "sparse_ignore_dirs": [],
+            "sparse_ignore_dirs": ["flang", "flang-rt"],
         },
 #        {
 #            "name": "rust",
@@ -412,7 +393,7 @@ def main():
             "type": "base", 
             "branch": "master",
             "rebase": True,
-            "sparse_ignore_dirs": ["Documentation", "arch/arm/boot/dts"],
+            "sparse_ignore_dirs": ["Documentation", "arch/arm/boot/dts", "arch/arm64/boot/dts"],
         },
         {
             "name": "musl",
@@ -435,7 +416,7 @@ def main():
             "type": "base",
             "branch": "main",
             "rebase": True,
-            "sparse_ignore_dirs": [],
+            "sparse_ignore_dirs": ["flang", "flang-rt"],
         },
         {
             "name": "busybox",
@@ -545,7 +526,7 @@ def main():
                 "aarch64": "arch/arm64/boot/Image.gz",
                 "riscv64": "arch/riscv/boot/Image",
             },
-            "sparse_ignore_dirs": ["Documentation", "arch/arm/boot/dts"],
+            "sparse_ignore_dirs": ["Documentation", "arch/arm/boot/dts", "arch/arm64/boot/dts"],
         },
     ]
 
