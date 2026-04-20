@@ -416,18 +416,6 @@ def main():
     )
     git_base = get_git_remote_base()
     parser.add_argument(
-        "--init",
-        nargs="?",
-        const=git_base or "DETECT_FAILED",
-        metavar="BASE_URL",
-        help=f"Initialize or reinit repos with the specified 'una' base URL. Defaults to the current repository's remote base ({git_base}) if not specified.",
-    )
-    parser.add_argument(
-        "--init-with-origin",
-        action="store_true",
-        help="Include original upstream remotes and enable rebasing projects to them during initialization.",
-    )
-    parser.add_argument(
         "--list",
         choices=["host", "base", "other", "all"],
         help="List repos of the specified type.",
@@ -507,12 +495,6 @@ def main():
     if args.create_disk:
         create_test_disk(test_disk)
 
-    if args.init == "DETECT_FAILED":
-        print("Error: --init was used without a BASE_URL, and no git remote 'una' was detected.")
-        print("Please rename your remote to 'una' and checkout 'una' or 'una/branch name':")
-        print("  git remote rename <origin_name> una")
-        sys.exit(1)
-
     if len(sys.argv) == 1:
         parser.print_help()
         sys.exit(0)
@@ -546,21 +528,21 @@ def main():
                 base += "/"
             una_url = f"{base}{cfg['una_repo']}"
             
+            # Use origin if provided in config
+            has_origin = "origin_url" in cfg
             init_or_reset_repo(
                 repo_dir=repo_dir, 
-                origin_url=cfg["origin_url"], 
+                origin_url=cfg.get("origin_url"), 
                 una_url=una_url, 
                 sparse_ignore_dirs=cfg["sparse_ignore_dirs"],
-                with_origin=args.init_with_origin
+                with_origin=has_origin
             )
             save_repo_state(cfg)
 
     repos = []
-    
     for r in repos_config:
         config = r.copy()
-        if not args.init_with_origin:
-            config["rebase"] = False
+        # Rebase behavior driven by config if rebase is enabled
         if una_base:
             base = una_base
             if not base.endswith("/") and not base.endswith(":"):
@@ -580,12 +562,12 @@ def main():
     else:
         repos_to_process = repos
 
-    # Check if repos exist before building or rebasing (unless we are also initializing them)
-    if (args.build or args.rebase) and not args.init:
+    # Check if repos exist before building or rebasing
+    if (args.build or args.rebase):
         missing = [r["name"] for r in repos_to_process if not Path(r["repo_dir"]).exists()]
         if missing:
             print(f"Warning: The following repository directories are missing: {', '.join(missing)}")
-            print("Please run with --init [BASE_URL] first to initialize the repositories.")
+            print("These should have been initialized automagically if a base URL was available.")
             sys.exit(1)
 
     if args.list:
@@ -614,33 +596,6 @@ def main():
                 print(f"\n=== Repository: {r['name']} ({r['repo_dir']}) [MISSING] ===")
             processed_dirs.add(r_path)
 
-    if args.init:
-        for arch in arches:
-            arch_bld_dir = bld_base / arch
-            staging_dir = arch_bld_dir / "staging"
-            target_dir = arch_bld_dir / "target"
-
-            if args.build == "ALL" or not args.build:
-                print(f"Initializing build directories for {arch}...")
-                shutil.rmtree(arch_bld_dir, ignore_errors=True)
-                host_install_dir.mkdir(parents=True, exist_ok=True)
-                staging_dir.mkdir(parents=True, exist_ok=True)
-                target_dir.mkdir(parents=True, exist_ok=True)
-        
-        initialized_dirs = set()
-        for cfg in repos_to_process:
-            repo_dir = cfg["repo_dir"]
-            if repo_dir in initialized_dirs:
-                continue
-            init_or_reset_repo(
-                repo_dir=repo_dir, 
-                origin_url=cfg["origin_url"], 
-                una_url=cfg["una_url"], 
-                sparse_ignore_dirs=cfg["sparse_ignore_dirs"],
-                with_origin=args.init_with_origin
-            )
-            save_repo_state(cfg)
-            initialized_dirs.add(repo_dir)
 
     if args.build:
         print("Starting build process.")
