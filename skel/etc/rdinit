@@ -1,8 +1,16 @@
 #!/usr/bin/sh
 PATH=/usr/sbin:/usr/bin
 
+HUGE_PAGES=",huge=within_size"
+
+case "$(uname -m)" in
+    riscv64)
+        HUGE_PAGES=
+        ;;
+esac
+
 mkdir new_root
-mount -n -t tmpfs -o size=32M,nodev,nosuid,noatime,nodiratime,huge=within_size rootfs new_root
+mount -n -t tmpfs -o size=64M,nodev,nosuid,noatime,nodiratime${HUGE_PAGES} rootfs new_root
 cp -a $(find / -maxdepth 1 \( -type d -o -type l \) ! -name / ! -name new_root -print) new_root
 rm -f new_root/dev/console
 
@@ -12,11 +20,11 @@ umount proc
 
 mount -n -t proc -o rw,nosuid,nodev,noexec,relatime proc new_root/proc
 mount -n -t sysfs -o rw,nosuid,nodev,noexec,relatime sysfs new_root/sys
-mount -n -t devtmpfs -o noexec,relatime,nosuid,huge=within_size,mode=0755,size=1M devtmpfs new_root/dev
+mount -n -t devtmpfs -o noexec,relatime,nosuid,mode=0755,size=1M"${HUGE_PAGES}" devtmpfs new_root/dev
 mkdir new_root/dev/pts
 mount -n -t devpts -o noexec,noatime,nodiratime,nosuid,mode=620,gid=0,ptmxmode=0666 devpts new_root/dev/pts
-mount -n -t tmpfs -o noexec,nodev,nosuid,noatime,nodiratime,nosuid,mode=1777,huge=within_size,size=128M tmpfs new_root/run
-mount -n -t tmpfs -o noexec,nodev,nosuid,noatime,nodiratime,nosuid,mode=1777,huge=within_size,size=128M tmpfs new_root/tmp
+mount -n -t tmpfs -o noexec,nodev,nosuid,noatime,nodiratime,nosuid,mode=1777,size=16M"${HUGE_PAGES}" tmpfs new_root/run
+mount -n -t tmpfs -o noexec,nodev,nosuid,noatime,nodiratime,nosuid,mode=1777,size=16M"${HUGE_PAGES}" tmpfs new_root/tmp
 ln -sf ../proc/self/fd new_root/dev/fd
 ln -sf ../proc/self/fd/0 new_root/dev/stdin
 ln -sf ../proc/self/fd/1 new_root/dev/stdout
