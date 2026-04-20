@@ -337,6 +337,11 @@ def main():
         action="store_true",
         help="Remove all files produced by the build and clean the workspace repositories.",
     )
+    parser.add_argument(
+        "--skel-etc-override",
+        metavar="PATH",
+        help="Override the default skel/etc directory with the content of PATH in the final system image.",
+    )
 
     args = parser.parse_args()
     
@@ -762,13 +767,16 @@ def main():
                         if hasattr(module, "target_install"): runner.run_step(r, "target_install", module.target_install, arch=arch)
 
             # Ensure skel/etc overrides anything installed by components before kernel packing
-            skel_etc = skel_dir / "etc"
+            skel_etc = Path(args.skel_etc_override) if args.skel_etc_override else skel_dir / "etc"
             if skel_etc.exists():
-                print(f"[{arch}] Finalizing: Replacing /etc with skel/etc before kernel build...")
+                print(f"[{arch}] Finalizing: Replacing /etc with {skel_etc} before kernel build...")
                 shutil.rmtree(staging_dir / "etc", ignore_errors=True)
                 shutil.rmtree(target_dir / "etc", ignore_errors=True)
                 shutil.copytree(skel_etc, staging_dir / "etc", symlinks=True)
                 shutil.copytree(skel_etc, target_dir / "etc", symlinks=True)
+            elif args.skel_etc_override:
+                print(f"[{arch}] Error: Skel etc override path {args.skel_etc_override} does not exist.")
+                sys.exit(1)
 
             linux_proj = next((r for r in target_configs_to_build if r["name"] == "linux-image"), None)
             if linux_proj:
