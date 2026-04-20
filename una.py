@@ -13,7 +13,7 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-from mods.utils import init_or_reset_repo, rebase_and_push, save_and_push, get_target_triple, get_arch_flags
+from mods.utils import init_or_reset_repo, rebase_and_push, save_and_push, get_target_triple, get_arch_flags, TqdmProgress
 from mods.snapshot import take_snapshot, compare_snapshots, write_report, get_report_paths
 
 bld_base = BASE_DIR / "bld"
@@ -883,6 +883,11 @@ def main():
         if top_repo_path not in processed_dirs:
             print(f"\n--- Top-level Repository (una) ---")
             top_repo = Repo(top_repo_path)
+            # Fetch from 'una' remote
+            if args.rebase:
+                print("Fetching from 'una'...")
+                top_repo.remotes.una.fetch(progress=TqdmProgress())
+            
             # For top-level, we assume 'una' branch rebasing onto 'una/una'
             target_branch = "una/una" 
             if tag:
@@ -899,6 +904,15 @@ def main():
             print(f"\n--- Repository: {cfg['name']} ({cfg['repo_dir']}) ---")
             repo = Repo(r_path)
             remote_prefix = "origin" if "origin_url" in cfg else "una"
+            
+            # Automatic fetch before rebase or on explicit request
+            if args.rebase:
+                print(f"Fetching from {remote_prefix}...")
+                repo.remotes[remote_prefix].fetch(progress=TqdmProgress())
+                if remote_prefix == "origin" and "una" in repo.remotes:
+                    print("Also fetching from una...")
+                    repo.remotes.una.fetch(progress=TqdmProgress())
+
             if remote_prefix == "una":
                 target_branch = "una/una"
             else:
