@@ -4,6 +4,8 @@ import argparse
 import shutil
 import os
 import sys
+import configparser
+import json
 from pathlib import Path
 
 # Add the script's directory to sys.path so 'mods' can be imported from anywhere
@@ -255,6 +257,154 @@ def propagate_skel(staging_dir, target_dir):
             f"{skel_dir}/.", str(dest)
         ], check=True)
 
+def save_repo_state(cfg: dict):
+    """Saves the repository configuration to its directory for scanning."""
+    repo_dir = Path(cfg["repo_dir"])
+    if not repo_dir.exists():
+        return
+    
+    state_file = repo_dir / ".una_config"
+    # Convert Path objects to strings for JSON
+    serializable = cfg.copy()
+    serializable["repo_dir"] = str(cfg["repo_dir"])
+    
+    with open(state_file, "w") as f:
+        json.dump(serializable, f, indent=4)
+
+def load_repo_config(config_path: Path):
+    cp = configparser.ConfigParser()
+    if not config_path.exists():
+        print(f"Error: Config file {config_path} not found.")
+        sys.exit(1)
+        
+    cp.read(config_path)
+    
+    raw_configs = {}
+    for section in cp.sections():
+        raw_configs[section] = dict(cp[section])
+    
+    final_repos = []
+    for name in raw_configs:
+        # Resolve references to get a flat dict of strings first
+        visited = set()
+        current_cfg = raw_configs[name].copy()
+        resolving_name = name
+        
+        while 'ref' in current_cfg:
+            ref_name = current_cfg['ref']
+            if ref_name in visited:
+                print(f"Error: Circular reference detected for repo {name}")
+                sys.exit(1)
+            if ref_name not in raw_configs:
+                print(f"Error: Reference {ref_name} not found for {resolving_name}")
+                sys.exit(1)
+            
+            # Combine parent into current (parent provides defaults, current overrides)
+            parent_base = raw_configs[ref_name].copy()
+            child_overrides = current_cfg.copy()
+            del child_overrides['ref']
+            
+            parent_base.update(child_overrides)
+            current_cfg = parent_base
+            visited.add(ref_name)
+        
+        cfg = current_cfg
+        cfg['name'] = name
+        
+        # Post-process types AFTER all merges are done for this repo
+        if 'rebase' in cfg:
+            if isinstance(cfg['rebase'], str):
+                cfg['rebase'] = cfg['rebase'].lower() in ('true', 'yes', '1')
+        else:
+            cfg['rebase'] = False
+            
+        if 'sparse_ignore_dirs' in cfg:
+            cfg['sparse_ignore_dirs'] = [s.strip() for s in cfg['sparse_ignore_dirs'].split(',') if s.strip()]
+        else:
+            cfg['sparse_ignore_dirs'] = []
+            
+        if 'repo_dir' in cfg:
+            # If relative, it's relative to BASE_DIR
+            rd = Path(cfg['repo_dir'])
+            if not rd.is_absolute():
+                cfg['repo_dir'] = BASE_DIR / rd
+            else:
+                cfg['repo_dir'] = rd
+        
+        # Handle kernel_image map
+        kimg = {}
+        for key in list(cfg.keys()):
+            if key.startswith('kernel_image.'):
+                arch = key.split('.', 1)[1]
+                kimg[arch] = cfg[key]
+                del cfg[key]
+        if kimg:
+            cfg['kernel_image'] = kimg
+            
+        final_repos.append(cfg)
+    return final_repos
+
+def scan_repos():
+    """Scans the repo/ directory for existing repositories and their states."""
+    repo_base = BASE_DIR / "repo"
+    if not repo_base.exists():
+        return []
+    
+    scanned = []
+    for d in repo_base.iterdir():
+        if d.is_dir():
+            state_file = d / ".una_config"
+            if state_file.exists():
+                try:
+                    with open(state_file, "r") as f:
+                        cfg = json.load(f)
+                        rd = Path(cfg["repo_dir"])
+                        if not rd.is_absolute():
+                            cfg["repo_dir"] = BASE_DIR / rd
+                        else:
+                            cfg["repo_dir"] = rd
+                        scanned.append(cfg)
+                except Exception as e:
+                    print(f"Warning: Failed to load state for {d}: {e}")
+    return scanned
+
+def remove_repo(name, repos, arches):
+    """Removes a repository from the list, cleans build outputs and deletes repo dir."""
+    target = next((r for r in repos if r["name"] == name), None)
+    if not target:
+        print(f"Error: Repository '{name}' not found.")
+        return False
+
+    print(f"Removing repository '{name}'...")
+    
+    # 1. Clean build outputs for each architecture
+    for arch in arches:
+        report_file = bld_base / arch / "report" / f"{name}.txt"
+        if report_file.exists():
+            print(f"[{arch}] Cleaning build outputs for {name}...")
+            paths = get_report_paths(report_file)
+            staging_dir = bld_base / arch / "staging"
+            target_dir = bld_base / arch / "target"
+            
+            for p in paths:
+                try:
+                    if p.startswith("staging/"):
+                        (staging_dir / p[8:]).unlink(missing_ok=True)
+                    elif p.startswith("target/"):
+                        (target_dir / p[7:]).unlink(missing_ok=True)
+                except Exception as e:
+                    print(f"[{arch}] Warning: Failed to remove {p}: {e}")
+            report_file.unlink()
+    
+    # 2. Delete the repository directory
+    repo_dir = Path(target["repo_dir"])
+    if repo_dir.exists():
+        print(f"Deleting repository directory: {repo_dir}")
+        shutil.rmtree(repo_dir)
+        
+    print(f"Repository '{name}' removed successfully.")
+    return True
+
 def main():
     parser = argparse.ArgumentParser(
         description="Initialize or reset Git repos from a list.",
@@ -342,6 +492,11 @@ def main():
         metavar="PATH",
         help="Override the default skel/etc directory with the content of PATH in the final system image.",
     )
+    parser.add_argument(
+        "--conf",
+        default="confs/default.conf",
+        help="Path to the repository configuration file. Default: confs/default.conf",
+    )
 
     args = parser.parse_args()
     
@@ -363,180 +518,44 @@ def main():
         sys.exit(0)
 
     # Configuration for components and repositories
-    repos_config = [
-        {
-            "name": "llvm-host",
-            "una_repo": "llvm-project.git",
-            "repo_dir": BASE_DIR / "repo/llvm",
-            "una_file": "una/host.py",
-            "origin_url": "/mnt/work/bld/llvm-project.git",
-#            "origin_url": "https://github.com/llvm/llvm-project.git",
-            "type": "host",
-            "branch": "main",
-            "rebase": True,
-            "sparse_ignore_dirs": ["flang", "flang-rt"],
-        },
-#        {
-#            "name": "rust",
-#            "una_repo": "rust.git", 
-#            "repo_dir": BASE_DIR / "repo/rust",
-#            "una_file": "una.py",
-#            "origin_url": "/mnt/work/bld/rust.git",
-#            "origin_url": "https://github.com/rust-lang/rust.git",
-#            "type": "host",
-#            "branch": "master",
-#            "rebase": True,
-#            "sparse_ignore_dirs": [],
-#        },
-        {
-            "name": "linux-headers",
-            "una_repo": "linux.git", 
-            "repo_dir": BASE_DIR / "repo/kernel",
-            "una_file": "una/headers.py",
-            "origin_url": "/mnt/work/bld/linux-stable.git",
-#            "origin_url": "https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable.git",
-            "type": "base", 
-            "branch": "master",
-            "rebase": True,
-            "sparse_ignore_dirs": ["Documentation", "arch/arm/boot/dts", "arch/arm64/boot/dts"],
-        },
-        {
-            "name": "musl",
-            "una_repo": "musl.git",
-            "repo_dir": BASE_DIR / "repo/musl",
-            "origin_url": "/mnt/work/bld/musl.git",
-#            "origin_url": "https://git.musl-libc.org/git/musl",
-            "type": "base",
-            "branch": "master",
-            "rebase": True,
-            "sparse_ignore_dirs": [],
-        },
-        {
-            "name": "llvm-runtime",
-            "una_repo": "llvm-project.git",
-            "repo_dir": BASE_DIR / "repo/llvm",
-            "una_file": "una/runtime.py",
-            "origin_url": "/mnt/work/bld/llvm-project.git",
-#            "origin_url": "https://github.com/llvm/llvm-project.git",
-            "type": "base",
-            "branch": "main",
-            "rebase": True,
-            "sparse_ignore_dirs": ["flang", "flang-rt"],
-        },
-        {
-            "name": "busybox",
-            "una_repo": "busybox.git",
-            "repo_dir": BASE_DIR / "repo/busybox",
-            "origin_url": "/mnt/work/bld/busybox.git",
-#            "origin_url": "https://git.busybox.net/busybox",
-            "type": "other",
-            "branch": "master",
-            "rebase": True,
-            "sparse_ignore_dirs": [],
-        },
-        {
-            "name": "openssl",
-            "una_repo": "openssl.git",
-            "repo_dir": BASE_DIR / "repo/openssl",
-            "origin_url": "/mnt/work/bld/openssl.git",
-#            "origin_url": "https://github.com/openssl/openssl.git",
-            "type": "other",
-            "branch": "master",
-            "rebase": True,
-            "sparse_ignore_dirs": [],
-        },
-        {
-            "name": "nsd",
-            "una_repo": "nsd.git",
-            "repo_dir": BASE_DIR / "repo/nsd",
-            "origin_url": "https://github.com/NLnetLabs/nsd.git",
-            "type": "other",
-            "branch": "master",
-            "rebase": True,
-            "sparse_ignore_dirs": [],
-        },
-        {
-            "name": "mxmux",
-            "una_repo": "mxmux.git",
-            "repo_dir": BASE_DIR / "repo/mxmux",
-            "origin_url": "https://github.com/daunabomba/mxmux.git",
-            "type": "other",
-            "branch": "master",
-            "rebase": False,
-            "sparse_ignore_dirs": [],
-        },
-        {
-            "name": "dropbear",
-            "una_repo": "dropbear.git",
-            "repo_dir": BASE_DIR / "repo/dropbear",
-            "origin_url": "https://github.com/mkj/dropbear.git",
-            "type": "other",
-            "branch": "master",
-            "rebase": True,
-            "sparse_ignore_dirs": [],
-        },
-        {
-            "name": "wireguard-tools",
-            "una_repo": "wireguard-tools.git",
-            "repo_dir": BASE_DIR / "repo/wireguard-tools",
-            "origin_url": "https://git.zx2c4.com/wireguard-tools",
-            "type": "other",
-            "branch": "master",
-            "rebase": True,
-            "sparse_ignore_dirs": [],
-        },
-        {
-            "name": "libmnl",
-            "una_repo": "libmnl.git",
-            "repo_dir": BASE_DIR / "repo/libmnl",
-            "origin_url": "https://git.netfilter.org/libmnl",
-            "type": "base",
-            "branch": "master",
-            "rebase": True,
-            "sparse_ignore_dirs": [],
-        },
-        {
-            "name": "libnftnl",
-            "una_repo": "libnftnl.git",
-            "repo_dir": BASE_DIR / "repo/libnftnl",
-            "origin_url": "https://git.netfilter.org/libnftnl",
-            "type": "base",
-            "branch": "master",
-            "rebase": True,
-            "sparse_ignore_dirs": [],
-        },
-        {
-            "name": "nftables",
-            "una_repo": "nftables.git",
-            "repo_dir": BASE_DIR / "repo/nftables",
-            "origin_url": "https://git.netfilter.org/nftables/",
-            "type": "other",
-            "branch": "master",
-            "rebase": True,
-            "sparse_ignore_dirs": [],
-        },
-        {
-            "name": "linux-image", 
-            "una_repo": "linux.git",
-            "repo_dir": BASE_DIR / "repo/kernel",
-            "una_file": "una/kernel.py",
-            "origin_url": "/mnt/work/bld/linux-stable.git",
-#            "origin_url": "https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable.git",
-            "type": "other",  # Phase 4: final image
-            "branch": "master", 
-            "rebase": True,
-            "kernel_image": {  # Only here!
-                "x32": "arch/x86/boot/bzImage",
-                "x86_64": "arch/x86/boot/bzImage", 
-                "aarch64": "arch/arm64/boot/Image.gz",
-                "riscv64": "arch/riscv/boot/Image",
-            },
-            "sparse_ignore_dirs": ["Documentation", "arch/arm/boot/dts", "arch/arm64/boot/dts"],
-        },
-    ]
+    conf_path = BASE_DIR / args.conf
+    repos_config = load_repo_config(conf_path)
+    
+    # Identify repositories to remove (those in filesystem but not in config)
+    scanned = scan_repos()
+    config_repo_names = {r["name"] for r in repos_config}
+    
+    for s_cfg in scanned:
+        if s_cfg["name"] not in config_repo_names:
+            print(f"Repository '{s_cfg['name']}' found in repo/ but not in config. Removing...")
+            remove_repo(s_cfg["name"], scanned, arches)
+
+    # Automatic Sync/Init for missing repos
+    una_base = args.init or get_git_remote_base()
+    
+    for cfg in repos_config:
+        repo_dir = Path(cfg["repo_dir"])
+        if not repo_dir.exists():
+            if not una_base:
+                print(f"Warning: New repository '{cfg['name']}' found in config but 'una' base URL is unknown. Skipping initialization.")
+                continue
+            
+            print(f"New repository '{cfg['name']}' detected. Initializing automagically...")
+            base = una_base
+            if not base.endswith("/") and not base.endswith(":"):
+                base += "/"
+            una_url = f"{base}{cfg['una_repo']}"
+            
+            init_or_reset_repo(
+                repo_dir=repo_dir, 
+                origin_url=cfg["origin_url"], 
+                una_url=una_url, 
+                sparse_ignore_dirs=cfg["sparse_ignore_dirs"],
+                with_origin=args.init_with_origin
+            )
+            save_repo_state(cfg)
 
     repos = []
-    una_base = args.init
     
     for r in repos_config:
         config = r.copy()
@@ -620,6 +639,7 @@ def main():
                 sparse_ignore_dirs=cfg["sparse_ignore_dirs"],
                 with_origin=args.init_with_origin
             )
+            save_repo_state(cfg)
             initialized_dirs.add(repo_dir)
 
     if args.build:
