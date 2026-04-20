@@ -409,11 +409,6 @@ def main():
     parser = argparse.ArgumentParser(
         description="Initialize or reset Git repos from a list.",
     )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Print what would be done without cloning/resetting.",
-    )
     git_base = get_git_remote_base()
     parser.add_argument(
         "--list",
@@ -513,7 +508,7 @@ def main():
             remove_repo(s_cfg["name"], scanned, arches)
 
     # Automatic Sync/Init for missing repos
-    una_base = args.init or get_git_remote_base()
+    una_base = get_git_remote_base()
     
     for cfg in repos_config:
         repo_dir = Path(cfg["repo_dir"])
@@ -903,7 +898,7 @@ def main():
             
             print(f"\n--- Repository: {cfg['name']} ({cfg['repo_dir']}) ---")
             repo = Repo(r_path)
-            remote_prefix = "origin" if args.init_with_origin else "una"
+            remote_prefix = "origin" if "origin_url" in cfg else "una"
             if remote_prefix == "una":
                 target_branch = "una/una"
             else:
