@@ -884,7 +884,7 @@ def main():
             print(f"\n--- Top-level Repository (una) ---")
             top_repo = Repo(top_repo_path)
             # Fetch from 'una' remote
-            if args.rebase:
+            if tag or args.rebase:
                 print("Fetching from 'una'...")
                 top_repo.remotes.una.fetch(progress=TqdmProgress())
             
@@ -905,8 +905,8 @@ def main():
             repo = Repo(r_path)
             remote_prefix = "origin" if "origin_url" in cfg else "una"
             
-            # Automatic fetch before rebase or on explicit request
-            if args.rebase:
+            # Automatic fetch before rebase/tag or on explicit request
+            if tag or args.rebase:
                 print(f"Fetching from {remote_prefix}...")
                 repo.remotes[remote_prefix].fetch(progress=TqdmProgress())
                 if remote_prefix == "origin" and "una" in repo.remotes:
