@@ -514,7 +514,9 @@ def main():
         repo_dir = Path(cfg["repo_dir"])
         if not repo_dir.exists():
             if not una_base:
-                print(f"Warning: New repository '{cfg['name']}' found in config but 'una' base URL is unknown. Skipping initialization.")
+                print(f"Warning: New repository '{cfg['name']}' found in config but 'una' base URL is unknown. "
+                      "Please ensure the top-level repository has a remote named 'una' (e.g., git remote rename origin una). "
+                      "Skipping initialization.")
                 continue
             
             print(f"New repository '{cfg['name']}' detected. Initializing automagically...")
