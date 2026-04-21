@@ -13,7 +13,7 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-from mods.utils import init_or_reset_repo, rebase_and_push, save_and_push, get_target_triple, get_arch_flags, TqdmProgress
+from mods.utils import init_or_reset_repo, rebase_and_push, save_and_push, get_target_triple, get_arch_flags, TqdmProgress, get_remote_head
 from mods.snapshot import take_snapshot, compare_snapshots, write_report, get_report_paths
 
 bld_base = BASE_DIR / "bld"
@@ -913,7 +913,10 @@ def main():
             if remote_prefix == "una":
                 target_branch = "una/una"
             else:
-                target_branch = f"origin/{cfg.get('branch', 'master')}"
+                branch = cfg.get("branch")
+                if not branch:
+                    branch = get_remote_head(repo, remote_prefix)
+                target_branch = f"{remote_prefix}/{branch}"
             
             if tag:
                 save_and_push(repo, target_branch, tag)

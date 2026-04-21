@@ -8,6 +8,24 @@ default_branch = "una"
 remote_una_name = "una"
 
 
+def get_remote_head(repo, remote_name):
+    """
+    Determines the default branch (HEAD) of a remote using 'git ls-remote --symref'.
+    """
+    try:
+        # git ls-remote --symref <remote> HEAD
+        out = repo.git.ls_remote("--symref", remote_name, "HEAD")
+        for line in out.splitlines():
+            if line.startswith("ref:"):
+                # Example: "ref: refs/heads/main\tHEAD"
+                ref_part = line.split()[1] # "refs/heads/main"
+                return ref_part.rsplit("/", 1)[-1]
+    except Exception as e:
+        print(f"Warning: Could not determine HEAD for remote '{remote_name}': {e}")
+    return "master" # Fallback
+
+
+
 class TqdmProgress(RemoteProgress):
     def __init__(self):
         super().__init__()
