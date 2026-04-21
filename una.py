@@ -154,8 +154,7 @@ def list_repos(repos, target_type=None):
     filtered = [r for r in repos if target_type is None or r.get("type") == target_type]
     for r in filtered:
         script_info = f" (Script: {r.get('una_file', 'una.py')})"
-        rebase_info = " [Rebase: Yes]" if r.get("rebase", False) else " [Rebase: No]"
-        print(f"[{r.get('type', 'unknown')}] {r['name']} -> {r['repo_dir']}{script_info}{rebase_info}")
+        print(f"[{r.get('type', 'unknown')}] {r['name']} -> {r['repo_dir']}{script_info}")
     return [r["name"] for r in filtered]
 
 
@@ -312,11 +311,7 @@ def load_repo_config(config_path: Path):
         cfg['name'] = name
         
         # Post-process types AFTER all merges are done for this repo
-        if 'rebase' in cfg:
-            if isinstance(cfg['rebase'], str):
-                cfg['rebase'] = cfg['rebase'].lower() in ('true', 'yes', '1')
-        else:
-            cfg['rebase'] = False
+        cfg['rebase'] = True
             
         if 'sparse_ignore_dirs' in cfg:
             cfg['sparse_ignore_dirs'] = [s.strip() for s in cfg['sparse_ignore_dirs'].split(',') if s.strip()]
@@ -923,7 +918,7 @@ def main():
             if tag:
                 save_and_push(repo, target_branch, tag)
             elif args.rebase:
-                rebase_and_push(repo, target_branch, rebase = cfg['rebase'])
+                rebase_and_push(repo, target_branch, rebase = True)
             processed_dirs.add(r_path)
 
     if args.checkout:
