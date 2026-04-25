@@ -13,7 +13,7 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-from mods.utils import init_or_reset_repo, merge_and_push, save_and_push, get_target_triple, get_arch_flags, TqdmProgress, get_remote_head
+from mods.utils import init_or_reset_repo, rebase_and_push, save_and_push, get_target_triple, get_arch_flags, TqdmProgress, get_remote_head
 from mods.snapshot import take_snapshot, compare_snapshots, write_report, get_report_paths
 
 bld_base = BASE_DIR / "bld"
@@ -422,9 +422,9 @@ def main():
         help="Build all projects (if no argument) or a specific component by name.",
     )
     parser.add_argument(
-        "--merge-latest-origin",
+        "--rebase",
         action="store_true",
-        help="Merge the latest changes from the upstream branch into the local branch and push.",
+        help="Rebase the local branch onto the upstream branch (with squash) and push to una.",
     )
     parser.add_argument(
         "--arch",
@@ -453,7 +453,7 @@ def main():
     parser.add_argument(
         "--save",
         metavar="tag",
-        help="Stage all changes, commit with the provided message, then merge and push for all repositories.",
+        help="Stage all changes, commit with the provided message, then rebase (with squash) and push for all repositories.",
     )
     parser.add_argument(
         "--create-disk",
@@ -537,7 +537,8 @@ def main():
             una_url=una_url, 
             sparse_ignore_dirs=cfg["sparse_ignore_dirs"],
             with_origin=has_origin,
-            reset=needs_reset
+            reset=needs_reset,
+            tag=cfg.get("tag")
         )
         if needs_reset:
             save_repo_state(cfg)
@@ -566,7 +567,7 @@ def main():
         repos_to_process = repos
 
     # Check if repos exist before building or rebasing
-    if (args.build or args.merge_latest_origin):
+    if (args.build or args.rebase):
         missing = [r["name"] for r in repos_to_process if not Path(r["repo_dir"]).exists()]
         if missing:
             print(f"Warning: The following repository directories are missing: {', '.join(missing)}")
@@ -903,7 +904,7 @@ def main():
             sys.exit(1)
 
     tag = args.save
-    if tag or args.merge_latest_origin:
+    if tag or args.rebase:
         from git import Repo
         processed_dirs = set()
 
@@ -913,7 +914,7 @@ def main():
             print(f"\n--- Top-level Repository (una) ---")
             top_repo = Repo(top_repo_path)
             # Fetch from 'una' remote
-            if tag or args.merge_latest_origin:
+            if tag or args.rebase:
                 print("Fetching from 'una'...")
                 top_repo.remotes.una.fetch(progress=TqdmProgress())
             
@@ -921,8 +922,8 @@ def main():
             target_branch = "una/una" 
             if tag:
                 save_and_push(top_repo, target_branch, tag, remote_name="una")
-            elif args.merge_latest_origin:
-                merge_and_push(top_repo, target_branch, remote_name="una")
+            elif args.rebase:
+                rebase_and_push(top_repo, target_branch, remote_name="una", squash=True)
             processed_dirs.add(top_repo_path)
 
         # Handle sub-repositories
@@ -934,8 +935,8 @@ def main():
             repo = Repo(r_path)
             remote_prefix = "origin" if "origin_url" in cfg else "una"
             
-            # Automatic fetch before merge/tag or on explicit request
-            if tag or args.merge_latest_origin:
+            # Automatic fetch before rebase/tag or on explicit request
+            if tag or args.rebase:
                 print(f"Fetching from {remote_prefix}...")
                 repo.remotes[remote_prefix].fetch(progress=TqdmProgress())
                 if remote_prefix == "origin" and "una" in repo.remotes:
@@ -952,8 +953,8 @@ def main():
             
             if tag:
                 save_and_push(repo, target_branch, tag)
-            elif args.merge_latest_origin:
-                merge_and_push(repo, target_branch)
+            elif args.rebase:
+                rebase_and_push(repo, target_branch, squash = True, tag = cfg.get("tag"))
             processed_dirs.add(r_path)
 
     if args.checkout:
@@ -968,11 +969,20 @@ def main():
             top_repo = Repo(top_repo_path)
             print(f"Fetching tags for top-level repo...")
             top_repo.remotes.una.fetch(tags=True)
-            print(f"Checking out tag '{tag_to_checkout}'...")
-            try:
-                top_repo.git.checkout(tag_to_checkout)
-            except Exception as e:
-                print(f"Error checking out tag '{tag_to_checkout}' in top-level repo: {e}")
+            
+            # Automatic fetch before rebase/tag or on explicit request
+            if tag_to_checkout or args.rebase:
+                print(f"Fetching from una...")
+                top_repo.remotes.una.fetch(progress=TqdmProgress())
+
+            if args.rebase:
+                rebase_and_push(top_repo, "una/una", remote_name="una", squash=True)
+            elif tag_to_checkout:
+                print(f"Checking out tag '{tag_to_checkout}'...")
+                try:
+                    top_repo.git.checkout(tag_to_checkout)
+                except Exception as e:
+                    print(f"Error checking out tag '{tag_to_checkout}' in top-level repo: {e}")
             processed_dirs.add(top_repo_path)
 
         # Handle sub-repositories

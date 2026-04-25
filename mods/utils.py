@@ -67,10 +67,11 @@ class TqdmProgress(RemoteProgress):
                 pass
 
 
-def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, sparse_ignore_dirs: list, with_origin: bool = True, reset: bool = True) -> Repo:
+def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, sparse_ignore_dirs: list, with_origin: bool = True, reset: bool = True, tag: str = None) -> Repo:
     """
     Initializes a repository or ensures an existing one has correct remotes and refspecs.
     If reset=True, it performs a hard reset to match the remote 'una' branch.
+    If tag is provided, it checks out that specific tag.
     """
     print(f"Syncing repo: {repo_dir}")
     if not os.path.exists(repo_dir):
@@ -147,7 +148,13 @@ def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, sparse_igno
     if not reset:
         return repo
 
-    # 4. Mandatory Reset to 'una' branch (only if reset=True)
+    # 4. Mandatory Reset or Checkout
+    if tag:
+        print(f"Checking out tag '{tag}' in {repo_dir}...")
+        repo.git.checkout(tag)
+        return repo
+
+    # Reset to 'una' branch
     unpushed = []
     try:
         if default_branch in repo.heads:
@@ -181,12 +188,31 @@ def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, sparse_igno
     return repo
 
 
-def merge_and_push(repo: Repo, branch_name: str, remote_name: str = remote_una_name):
-    print(f"Merging changes from {branch_name}...")
-    # These will raise exceptions on failure, which will stop the script
-    repo.git.merge(branch_name)
+def rebase_and_push(repo: Repo, branch_name: str, remote_name: str = remote_una_name, squash: bool = True, tag: str = None):
+    print(f"Rebasing current branch upon {branch_name} (squash={squash}, tag={tag})...")
+    
+    if squash:
+        # 1. Reset to the target branch (keeps all local changes staged in index)
+        # This effectively 'squashes' everything into a single set of changes on top of branch_name
+        repo.git.reset("--soft", branch_name)
+        
+        # 2. Commit the squashed changes
+        msg = f"una: squashed update from {branch_name}"
+        if tag:
+            msg = f"una: squashed update to tag {tag} (on {branch_name})"
+            
+        try:
+            repo.git.commit("-m", msg)
+        except:
+            print("No changes to squash; already up to date.")
+            # We still need to push if we want to ensure remote matches local
+    else:
+        # Standard rebase
+        repo.git.rebase(branch_name)
+        # Create an automatic rebase marker if not squashing
+        repo.git.commit("--allow-empty", "-m", "rebase")
 
-    print(f"Pushing merged branch to {remote_name}...")
+    print(f"Force-pushing rebased/squashed branch to {remote_name} (pruning history)...")
     refspec = f"refs/heads/{repo.active_branch.name}:refs/heads/{repo.active_branch.name}"
     repo.remotes[remote_name].push(refspec, force=True, progress=TqdmProgress())
 
@@ -201,8 +227,8 @@ def save_and_push(repo: Repo, branch_name: str, tag: str, remote_name: str = rem
     except Exception as e:
         print(f"Nothing to commit or commit failed: {e}")
 
-    # Merge latest and push the branch first
-    merge_and_push(repo, branch_name, remote_name=remote_name)
+    # Rebase latest and push the branch first (always squash for 'una' updates)
+    rebase_and_push(repo, branch_name, remote_name=remote_name, squash=True)
     
     # Create and push tag on the final result
     print(f"Creating tag: {tag}")

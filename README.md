@@ -8,7 +8,7 @@ Una is a build tool designed to create a custom, minimal Linux system based on t
 - **Automated Orchestration**: Manages dependencies and build phases (Headers -> Runtime -> Base -> Kernel).
 - **Safe Environment**: Prevents accidental data loss by blocking `git clean` operations on repositories with uncommitted changes.
 - **Embedded compiler configs**: Automatically generates architecture-specific Clang configurations (`musl.cfg`, etc.) to ensure correct header and library linking.
-- **Git-integrated**: Automatic initialization, merging, and synchronization across multiple component repositories.
+- **Git-integrated**: Automatic initialization, rebasing, and synchronization across multiple component repositories.
 - **QEMU Integration**: Integrated emulator runner for testing kernels immediately after building.
 - **Test Disk Support**: Easy creation of partitioned and formatted test disk images.
 
@@ -100,7 +100,23 @@ The top-level `una.py` sets environment variables like `CFLAGS`, `CXXFLAGS`, and
 - **Check Status**: `python una.py --status` (Show git status for all repos).
 - **Save Changes**: `python una.py --save "tag"` (Stage, commit, tag, and push changes across all repos).
 - **Checkout Tag**: `python una.py --checkout "tag"` (Switch all repositories to a specific tag).
-- **Merge Latest Origin**: `python una.py --merge-latest-origin` (Fetch and merge latest changes from the upstream branches into local branches).
+- **Rebase**: `python una.py --rebase` (Fetch and rebase local branches onto upstream branches with squashing for a clean history).
 - **Git Config**: `python una.py --git-config key=value` (Pass arbitrary git config to all operations, e.g. SSH keys).
 - **Clean**: `python una.py --clean` (Global cleanup of build artifacts and environment; safe check for dirty repos).
 - **List Repos**: `python una.py --list all` (List all managed repositories).
+108: 
+109: ## Advanced Configuration
+110: 
+111: ### Repository Tags
+112: In `confs/default.conf`, you can specify a specific tag for any repository. When initialized or reset, Una will checkout this exact tag instead of the default `una` branch.
+113: 
+114: ```ini
+115: [musl]
+116: una_repo = musl.git
+117: repo_dir = repo/musl
+118: origin_url = https://git.musl-libc.org/git/musl
+119: tag = v1.2.5
+120: ```
+121: 
+122: ### Workflow: Rebase and Squash
+123: To maintain a clean history, Una's `--rebase` and `--save` commands use a squashing workflow. Local commits are squashed into a single logical update commit on top of the upstream base before force-pushing. This allows the `una` branch to remain a flat series of project-specific patches.
