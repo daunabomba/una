@@ -278,6 +278,11 @@ def load_repo_config(config_path: Path):
         
     cp.read(config_path)
     
+    global_cfg = {}
+    if 'una' in cp.sections():
+        global_cfg = dict(cp['una'])
+        cp.remove_section('una')
+    
     raw_configs = {}
     for section in cp.sections():
         raw_configs[section] = dict(cp[section])
@@ -337,7 +342,7 @@ def load_repo_config(config_path: Path):
             cfg['kernel_image'] = kimg
             
         final_repos.append(cfg)
-    return final_repos
+    return final_repos, global_cfg
 
 def scan_repos():
     """Scans the repo/ directory for existing repositories and their states."""
@@ -491,7 +496,7 @@ def main():
 
     # Configuration for components and repositories
     conf_path = BASE_DIR / args.conf
-    repos_config = load_repo_config(conf_path)
+    repos_config, global_cfg = load_repo_config(conf_path)
     
     # Identify repositories to remove (those in filesystem but not in config)
     scanned = scan_repos()
@@ -502,33 +507,39 @@ def main():
             print(f"Repository '{s_cfg['name']}' found in repo/ but not in config. Removing...")
             remove_repo(s_cfg["name"], scanned, arches)
 
-    # Automatic Sync/Init for missing repos
+    # Automatic Sync/Init for repos
     una_base = get_git_remote_base()
     
     for cfg in repos_config:
         repo_dir = Path(cfg["repo_dir"])
-        if not repo_dir.exists():
+        
+        # We ALWAYS want to ensure remotes are correctly configured (URLs, refspecs)
+        # but we only want to perform a destructive RESET if the repo is missing.
+        needs_reset = not repo_dir.exists()
+        
+        if needs_reset:
             if not una_base:
                 print(f"Warning: New repository '{cfg['name']}' found in config but 'una' base URL is unknown. "
                       "Please ensure the top-level repository has a remote named 'una' (e.g., git remote rename origin una). "
                       "Skipping initialization.")
                 continue
-            
-            print(f"New repository '{cfg['name']}' detected. Initializing automagically...")
-            base = una_base
-            if not base.endswith("/") and not base.endswith(":"):
-                base += "/"
-            una_url = f"{base}{cfg['una_repo']}"
-            
-            # Use origin if provided in config
-            has_origin = "origin_url" in cfg
-            init_or_reset_repo(
-                repo_dir=repo_dir, 
-                origin_url=cfg.get("origin_url"), 
-                una_url=una_url, 
-                sparse_ignore_dirs=cfg["sparse_ignore_dirs"],
-                with_origin=has_origin
-            )
+            print(f"New repository '{cfg['name']}' detected. Initializing...")
+        
+        base = una_base or "UNKNOWN_BASE"
+        if not base.endswith("/") and not base.endswith(":"):
+            base += "/"
+        una_url = f"{base}{cfg['una_repo']}"
+        
+        has_origin = "origin_url" in cfg
+        init_or_reset_repo(
+            repo_dir=repo_dir, 
+            origin_url=cfg.get("origin_url"), 
+            una_url=una_url, 
+            sparse_ignore_dirs=cfg["sparse_ignore_dirs"],
+            with_origin=has_origin,
+            reset=needs_reset
+        )
+        if needs_reset:
             save_repo_state(cfg)
 
     repos = []
@@ -694,7 +705,11 @@ def main():
                     module = load_repo_una(proj["repo_dir"], proj.get("una_file", "una.py"))
                     kwargs = {"arch": arch}
                     if proj["name"] == "linux-headers":
-                        kconfig = args.kconfig or BASE_DIR / "confs" / f"kernel.{arch}.config"
+                        kconfig = args.kconfig
+                        if not kconfig and 'kconfig' in global_cfg:
+                            kconfig = BASE_DIR / global_cfg['kconfig'].replace("<arch>", arch)
+                        if not kconfig:
+                            kconfig = BASE_DIR / "confs" / f"kernel.{arch}.config"
                         kwargs["kconfig"] = Path(kconfig).absolute()
 
                     if hasattr(module, "target_configure"): runner.run_step(proj, "target_configure", module.target_configure, **kwargs)
@@ -734,15 +749,22 @@ def main():
                         if hasattr(module, "target_install"): runner.run_step(r, "target_install", module.target_install, arch=arch)
 
             # Ensure skel/etc overrides anything installed by components before kernel packing
-            skel_etc = Path(args.skel_etc_override) if args.skel_etc_override else skel_dir / "etc"
+            skel_etc = None
+            if args.skel_etc_override:
+                skel_etc = Path(args.skel_etc_override)
+            elif 'etc_dir' in global_cfg:
+                skel_etc = BASE_DIR / global_cfg['etc_dir']
+            else:
+                skel_etc = skel_dir / "etc"
+
             if skel_etc.exists():
                 print(f"[{arch}] Finalizing: Replacing /etc with {skel_etc} before kernel build...")
                 shutil.rmtree(staging_dir / "etc", ignore_errors=True)
                 shutil.rmtree(target_dir / "etc", ignore_errors=True)
                 shutil.copytree(skel_etc, staging_dir / "etc", symlinks=True)
                 shutil.copytree(skel_etc, target_dir / "etc", symlinks=True)
-            elif args.skel_etc_override:
-                print(f"[{arch}] Error: Skel etc override path {args.skel_etc_override} does not exist.")
+            elif args.skel_etc_override or 'etc_dir' in global_cfg:
+                print(f"[{arch}] Error: Skel etc override path {skel_etc} does not exist.")
                 sys.exit(1)
 
             linux_proj = next((r for r in target_configs_to_build if r["name"] == "linux-image"), None)
@@ -750,10 +772,14 @@ def main():
                 print(f"[{arch}] Target Phase 4: Kernel Finalization")
                 module = load_repo_una(linux_proj["repo_dir"], linux_proj.get("una_file", "una.py"))
                 
-                kconfig = args.kconfig or BASE_DIR / "confs" / f"kernel.{arch}.config"
+                kconfig = args.kconfig
+                if not kconfig and 'kconfig' in global_cfg:
+                    kconfig = BASE_DIR / global_cfg['kconfig'].replace("<arch>", arch)
+                if not kconfig:
+                    kconfig = BASE_DIR / "confs" / f"kernel.{arch}.config"
                 kconfig_path = Path(kconfig).absolute()
                 
-                if hasattr(module, "target_configure"): runner.run_step(r, "target_configure", module.target_configure, arch=arch, kconfig=kconfig_path)
+                if hasattr(module, "target_configure"): runner.run_step(linux_proj, "target_configure", module.target_configure, arch=arch, kconfig=kconfig_path)
                 if hasattr(module, "target_build"): runner.run_step(linux_proj, "target_build", module.target_build, arch=arch, kconfig=kconfig_path)
                 if hasattr(module, "target_install"): runner.run_step(linux_proj, "target_install", module.target_install, arch=arch, kconfig=kconfig_path)
 
@@ -763,7 +789,10 @@ def main():
                     if arch in image_map:
                         rel_path = image_map[arch]
                         src_img = Path(linux_proj["repo_dir"]) / rel_path
-                        dest_img = bld_base / f"kernel.{arch}"
+                        
+                        kernel_name = linux_proj.get("kernel_name", "kernel.<arch>")
+                        dest_img = bld_base / kernel_name.replace("<arch>", arch)
+                        
                         if src_img.exists():
                             print(f"[{arch}] Copying kernel image to {dest_img}")
                             shutil.copy(src_img, dest_img)
@@ -812,7 +841,8 @@ def main():
         arch = arches[0]
         print(f"\n--- Run Stage: {target_name} ({arch}) ---")
         
-        kernel_img = bld_base / f"kernel.{arch}"
+        kernel_name = proj.get("kernel_name", "kernel.<arch>")
+        kernel_img = bld_base / kernel_name.replace("<arch>", arch)
         if not kernel_img.exists():
             print(f"Error: Kernel image not found at {kernel_img}. Please build it first with --build {target_name}.")
             sys.exit(1)

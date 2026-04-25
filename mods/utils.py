@@ -11,9 +11,13 @@ remote_una_name = "una"
 def get_remote_head(repo, remote_name):
     """
     Determines the default branch (HEAD) of a remote using 'git ls-remote --symref'.
+    Also updates the local remote HEAD marker.
     """
     try:
-        # git ls-remote --symref <remote> HEAD
+        # First, try to update the local remote HEAD marker
+        repo.git.remote("set-head", remote_name, "-a")
+        
+        # Then, try to get it from the symref
         out = repo.git.ls_remote("--symref", remote_name, "HEAD")
         for line in out.splitlines():
             if line.startswith("ref:"):
@@ -22,7 +26,15 @@ def get_remote_head(repo, remote_name):
                 return ref_part.rsplit("/", 1)[-1]
     except Exception as e:
         print(f"Warning: Could not determine HEAD for remote '{remote_name}': {e}")
-    return "master" # Fallback
+    
+    # Fallback to checking the local remote HEAD ref if set-head succeeded
+    try:
+        head_ref = repo.remotes[remote_name].refs.HEAD
+        return head_ref.ref.name.rsplit("/", 1)[-1]
+    except (IndexError, AttributeError, ValueError):
+        pass
+
+    return "master" # Final fallback
 
 
 
@@ -55,8 +67,12 @@ class TqdmProgress(RemoteProgress):
                 pass
 
 
-def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, sparse_ignore_dirs: str, with_origin: bool = True) -> Repo:
-    print(f"Initializing repo: {repo_dir}")
+def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, sparse_ignore_dirs: list, with_origin: bool = True, reset: bool = True) -> Repo:
+    """
+    Initializes a repository or ensures an existing one has correct remotes and refspecs.
+    If reset=True, it performs a hard reset to match the remote 'una' branch.
+    """
+    print(f"Syncing repo: {repo_dir}")
     if not os.path.exists(repo_dir):
         clone_url = origin_url if with_origin else una_url
         print(f"Cloning repo into {repo_dir} from {clone_url}...")
@@ -65,77 +81,86 @@ def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, sparse_igno
             # If we cloned from una_url, it's currently named 'origin'. Rename it to 'una'.
             repo.remotes.origin.rename(remote_una_name)
     else:
-        print(f"Repo exists at {repo_dir}; opening...")
+        # print(f"Repo exists at {repo_dir}; opening...")
         repo = Repo(repo_dir)
 
+    # 1. Update Origin Remote
     if with_origin:
         if "origin" not in [r.name for r in repo.remotes]:
             repo.create_remote("origin", origin_url)
         else:
-            repo.remotes.origin.set_url(origin_url)
+            if str(repo.remotes.origin.url) != origin_url:
+                print(f"Updating origin URL for {repo_dir}")
+                repo.remotes.origin.set_url(origin_url)
         
-        print("Setting fetch refspec for origin...")
-        repo.git.config("remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
+        # Ensure wildcard refspec so we see ALL branches (fixes the 'master' only issue)
+        current_fetch = ""
+        try: current_fetch = repo.git.config("--get", "remote.origin.fetch")
+        except: pass
+        
+        if current_fetch != "+refs/heads/*:refs/remotes/origin/*":
+            print(f"Updating origin fetch refspec for {repo_dir}...")
+            repo.git.config("remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
 
-        print("Fetching latest changes from origin...")
-        repo.remotes.origin.fetch(progress=TqdmProgress())
+        if reset:
+            print("Fetching latest changes from origin...")
+            repo.remotes.origin.fetch(progress=TqdmProgress(), prune=True)
 
+    # 2. Update Una Remote
     if remote_una_name not in [r.name for r in repo.remotes]:
         repo.create_remote(remote_una_name, una_url)
     else:
-        repo.remotes[remote_una_name].set_url(una_url)
+        if str(repo.remotes[remote_una_name].url) != una_url:
+             print(f"Updating una URL for {repo_dir}")
+             repo.remotes[remote_una_name].set_url(una_url)
 
+    # Ensure wildcard refspec for una
+    repo.git.config(f"remote.{remote_una_name}.fetch", f"+refs/heads/*:refs/remotes/{remote_una_name}/*")
+
+    if reset:
+        print(f"Fetching latest changes from {remote_una_name}...")
+        try:
+            repo.remotes[remote_una_name].fetch(progress=TqdmProgress(), tags=True, prune=True)
+        except Exception as e:
+            print(f"\nError: Failed to fetch from remote '{remote_una_name}' at {una_url}")
+            print(f"Git Error Details: {e}")
+            sys.exit(1)
+
+    # 3. Sparse Checkout Management
     if sparse_ignore_dirs:
-        print(f"Sparse-checkout ignoring dirs in {repo_dir}: {sparse_ignore_dirs}")
         repo.config_writer().set_value("core", "sparseCheckout", "true").release()
         repo.config_writer().set_value("core", "sparseCheckoutCone", "false").release()
         repo.config_writer().set_value("index", "sparse", "true").release()
-        repo.git.sparse_checkout("init")
+        try: repo.git.sparse_checkout("init")
+        except: pass
         
         sparse_file = os.path.join(repo_dir, ".git", "info", "sparse-checkout")
         with open(sparse_file, "w") as f:
-            f.write("/*\n")  # CORRECT: Normal newline
+            f.write("/*\n")
             for ignore_dir in sparse_ignore_dirs:
                 dir_pattern = ignore_dir.rstrip('/') + '/' if not ignore_dir.endswith('/') else ignore_dir
                 f.write(f"!{dir_pattern}\n")
         
-        repo.git.sparse_checkout("reapply")
+        if reset:
+            repo.git.sparse_checkout("reapply")
 
-    print("Setting fetch refspec for una...")
-    repo.git.config(f"remote.{remote_una_name}.fetch", f"+refs/heads/*:refs/remotes/{remote_una_name}/*")
+    if not reset:
+        return repo
 
-    remote_una = repo.remotes[remote_una_name]
-    print(f"Fetching latest changes from {remote_una_name} ({remote_una.url})...")
-    try:
-        remote_una.fetch(progress=TqdmProgress(), tags=True)
-    except Exception as e:
-        print(f"\nError: Failed to fetch from remote '{remote_una_name}' at {remote_una.url}")
-        print(f"Please ensure the repository exists and you have access.")
-        print(f"Git Error Details: {e}")
-        sys.exit(1)
-
-    # Check for local unpushed changes or dirty state before we reset
+    # 4. Mandatory Reset to 'una' branch (only if reset=True)
     unpushed = []
     try:
         if default_branch in repo.heads:
             local_branch = repo.heads[default_branch]
             remote_ref = repo.remotes[remote_una_name].refs[default_branch]
             unpushed = list(repo.iter_commits(f"{remote_ref.path}..{local_branch.path}"))
-    except (IndexError, AttributeError):
-        pass
+    except: pass
 
     if unpushed or repo.is_dirty(untracked_files=True):
         print("\n" + "!" * 80)
-        print(f"WARNING: Repository {repo_dir} has local changes that will be LOST!")
-        if unpushed:
-            print(f" - {len(unpushed)} unpushed commits on branch '{default_branch}'")
-        if repo.is_dirty(untracked_files=True):
-            print(" - Uncommitted or untracked changes in the working tree")
+        print(f"WARNING: Repository {repo_dir} has local changes that will be LOST during reset!")
         print("!" * 80 + "\n")
-        # In an interactive shell we might wait, but here we proceed as the script is automated.
-        # However, specifically reporting it helps the user see WHY their files vanished.
 
-    print("Checking out branch una...")
     try:
         remote_ref = repo.remotes.una.refs[default_branch]
     except (IndexError, AttributeError):
@@ -150,10 +175,7 @@ def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, sparse_igno
         local_branch.set_tracking_branch(remote_ref)
         local_branch.checkout()
 
-    print("Running git clean -fdx...")
     repo.git.clean("-fdx")
-
-    print("Running git reset --hard...")
     repo.head.reset(index=True, working_tree=True)
 
     return repo
