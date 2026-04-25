@@ -150,8 +150,9 @@ def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, sparse_igno
 
     # 4. Mandatory Reset or Checkout
     if tag:
-        print(f"Checking out tag '{tag}' in {repo_dir}...")
-        repo.git.checkout(tag)
+        print(f"Checking out tag '{tag}' in {repo_dir} as base for branch '{default_branch}'...")
+        # Use -B to create or reset the 'una' branch to point to this tag
+        repo.git.checkout("-B", default_branch, tag)
         return repo
 
     # Reset to 'una' branch
@@ -213,7 +214,12 @@ def rebase_and_push(repo: Repo, branch_name: str, remote_name: str = remote_una_
         repo.git.commit("--allow-empty", "-m", "rebase")
 
     print(f"Force-pushing rebased/squashed branch to {remote_name} (pruning history)...")
-    refspec = f"refs/heads/{repo.active_branch.name}:refs/heads/{repo.active_branch.name}"
+    try:
+        current_branch_name = repo.active_branch.name
+    except (TypeError, ValueError):
+        current_branch_name = default_branch
+        
+    refspec = f"refs/heads/{current_branch_name}:refs/heads/{current_branch_name}"
     repo.remotes[remote_name].push(refspec, force=True, progress=TqdmProgress())
 
 
