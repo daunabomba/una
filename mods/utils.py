@@ -150,9 +150,21 @@ def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, sparse_igno
 
     # 4. Mandatory Reset or Checkout
     if tag:
-        print(f"Checking out tag '{tag}' in {repo_dir} as base for branch '{default_branch}'...")
-        # Use -B to create or reset the 'una' branch to point to this tag
-        repo.git.checkout("-B", default_branch, tag)
+        try:
+            remote_ref = repo.remotes.una.refs[default_branch]
+            print(f"Found existing '{default_branch}' branch on remote. Checking it out to preserve patches...")
+            if default_branch in repo.heads:
+                repo.heads[default_branch].set_tracking_branch(remote_ref)
+                repo.heads[default_branch].checkout()
+            else:
+                local_branch = repo.create_head(default_branch, remote_ref)
+                local_branch.set_tracking_branch(remote_ref)
+                local_branch.checkout()
+            print(f"Note: You can now run '--rebase' to move your patches onto tag '{tag}'.")
+        except (IndexError, AttributeError):
+            print(f"No remote '{default_branch}' branch found. Initializing branch '{default_branch}' from tag '{tag}'...")
+            # Start fresh from the tag since no project branch exists yet
+            repo.git.checkout("-B", default_branch, tag)
         return repo
 
     # Reset to 'una' branch
