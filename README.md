@@ -8,7 +8,7 @@ Una is a build tool designed to create a custom, minimal Linux system based on t
 - **Automated Orchestration**: Manages dependencies and build phases (Headers -> Runtime -> Base -> Kernel).
 - **Safe Environment**: Prevents accidental data loss by blocking `git clean` operations on repositories with uncommitted changes.
 - **Embedded compiler configs**: Automatically generates architecture-specific Clang configurations (`musl.cfg`, etc.) to ensure correct header and library linking.
-- **Git-integrated**: Automatic initialization, rebasing, and synchronization across multiple component repositories.
+- **Git-integrated**: Automatic initialization, merging, and synchronization across multiple component repositories.
 - **QEMU Integration**: Integrated emulator runner for testing kernels immediately after building.
 - **Test Disk Support**: Easy creation of partitioned and formatted test disk images.
 
@@ -100,7 +100,7 @@ The top-level `una.py` sets environment variables like `CFLAGS`, `CXXFLAGS`, and
 - **Check Status**: `python una.py --status` (Show git status for all repos).
 - **Save Changes**: `python una.py --save "tag"` (Stage, commit, tag, and push changes across all repos).
 - **Checkout Tag**: `python una.py --checkout "tag"` (Switch all repositories to a specific tag).
-- **Rebase**: `python una.py --rebase` (Fetch and rebase all local branches onto their remotes).
+- **Merge Latest Origin**: `python una.py --merge-latest-origin` (Fetch and merge latest changes from the upstream branches into local branches).
 - **Git Config**: `python una.py --git-config key=value` (Pass arbitrary git config to all operations, e.g. SSH keys).
 - **Clean**: `python una.py --clean` (Global cleanup of build artifacts and environment; safe check for dirty repos).
 - **List Repos**: `python una.py --list all` (List all managed repositories).

@@ -13,7 +13,7 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-from mods.utils import init_or_reset_repo, rebase_and_push, save_and_push, get_target_triple, get_arch_flags, TqdmProgress, get_remote_head
+from mods.utils import init_or_reset_repo, merge_and_push, save_and_push, get_target_triple, get_arch_flags, TqdmProgress, get_remote_head
 from mods.snapshot import take_snapshot, compare_snapshots, write_report, get_report_paths
 
 bld_base = BASE_DIR / "bld"
@@ -316,7 +316,7 @@ def load_repo_config(config_path: Path):
         cfg['name'] = name
         
         # Post-process types AFTER all merges are done for this repo
-        cfg['rebase'] = True
+            
             
         if 'sparse_ignore_dirs' in cfg:
             cfg['sparse_ignore_dirs'] = [s.strip() for s in cfg['sparse_ignore_dirs'].split(',') if s.strip()]
@@ -422,9 +422,9 @@ def main():
         help="Build all projects (if no argument) or a specific component by name.",
     )
     parser.add_argument(
-        "--rebase",
+        "--merge-latest-origin",
         action="store_true",
-        help="Rebase the local 'una' branch onto its configured upstream una branch and push to una.",
+        help="Merge the latest changes from the upstream branch into the local branch and push.",
     )
     parser.add_argument(
         "--arch",
@@ -453,7 +453,7 @@ def main():
     parser.add_argument(
         "--save",
         metavar="tag",
-        help="Stage all changes, commit with the provided message, then rebase and push for all repositories.",
+        help="Stage all changes, commit with the provided message, then merge and push for all repositories.",
     )
     parser.add_argument(
         "--create-disk",
@@ -545,7 +545,7 @@ def main():
     repos = []
     for r in repos_config:
         config = r.copy()
-        # Rebase behavior driven by config if rebase is enabled
+        # Merge behavior driven by config if merge is enabled
         if una_base:
             base = una_base
             if not base.endswith("/") and not base.endswith(":"):
@@ -566,7 +566,7 @@ def main():
         repos_to_process = repos
 
     # Check if repos exist before building or rebasing
-    if (args.build or args.rebase):
+    if (args.build or args.merge_latest_origin):
         missing = [r["name"] for r in repos_to_process if not Path(r["repo_dir"]).exists()]
         if missing:
             print(f"Warning: The following repository directories are missing: {', '.join(missing)}")
@@ -692,9 +692,11 @@ def main():
                 # Static Config
                 musl_static_cfg.write_text(f"{common_flags}-isystem {staging_dir}/usr/include\n-fuse-ld={lld_path}\n-nostdlib\n{lib_p}/Scrt1.o\n{lib_p}/crti.o\n-L{lib_p}\n-lc\n{lib_p}/crtn.o\n-Wl,-dynamic-linker,{ld_musl}\n")
 
-            os.environ["CFLAGS"] = f"--config={musl_cfg} -pipe -D_FILE_OFFSET_BITS=64"
-            os.environ["CXXFLAGS"] = f"--config={musl_cxx_cfg} -pipe -D_FILE_OFFSET_BITS=64"
-            os.environ["CFLAGS_STATIC"] = f"--config={musl_static_cfg} -pipe -D_FILE_OFFSET_BITS=64"
+            cpu_flags = global_cfg.get('cpu_flags', '')
+            os.environ["CFLAGS"] = f"--config={musl_cfg} -pipe -D_FILE_OFFSET_BITS=64 {cpu_flags}"
+            os.environ["CXXFLAGS"] = f"--config={musl_cxx_cfg} -pipe -D_FILE_OFFSET_BITS=64 {cpu_flags}"
+            os.environ["CFLAGS_STATIC"] = f"--config={musl_static_cfg} -pipe -D_FILE_OFFSET_BITS=64 {cpu_flags}"
+            os.environ["CPPFLAGS"] = f"-D_FILE_OFFSET_BITS=64 {cpu_flags}"
 
             all_target_repos = [r for r in repos if r["type"] in ["base", "other"]]
 
@@ -901,7 +903,7 @@ def main():
             sys.exit(1)
 
     tag = args.save
-    if tag or args.rebase:
+    if tag or args.merge_latest_origin:
         from git import Repo
         processed_dirs = set()
 
@@ -911,7 +913,7 @@ def main():
             print(f"\n--- Top-level Repository (una) ---")
             top_repo = Repo(top_repo_path)
             # Fetch from 'una' remote
-            if tag or args.rebase:
+            if tag or args.merge_latest_origin:
                 print("Fetching from 'una'...")
                 top_repo.remotes.una.fetch(progress=TqdmProgress())
             
@@ -919,8 +921,8 @@ def main():
             target_branch = "una/una" 
             if tag:
                 save_and_push(top_repo, target_branch, tag, remote_name="una")
-            elif args.rebase:
-                rebase_and_push(top_repo, target_branch, remote_name="una")
+            elif args.merge_latest_origin:
+                merge_and_push(top_repo, target_branch, remote_name="una")
             processed_dirs.add(top_repo_path)
 
         # Handle sub-repositories
@@ -932,8 +934,8 @@ def main():
             repo = Repo(r_path)
             remote_prefix = "origin" if "origin_url" in cfg else "una"
             
-            # Automatic fetch before rebase/tag or on explicit request
-            if tag or args.rebase:
+            # Automatic fetch before merge/tag or on explicit request
+            if tag or args.merge_latest_origin:
                 print(f"Fetching from {remote_prefix}...")
                 repo.remotes[remote_prefix].fetch(progress=TqdmProgress())
                 if remote_prefix == "origin" and "una" in repo.remotes:
@@ -950,8 +952,8 @@ def main():
             
             if tag:
                 save_and_push(repo, target_branch, tag)
-            elif args.rebase:
-                rebase_and_push(repo, target_branch, rebase = True)
+            elif args.merge_latest_origin:
+                merge_and_push(repo, target_branch)
             processed_dirs.add(r_path)
 
     if args.checkout:

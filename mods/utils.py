@@ -181,17 +181,12 @@ def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, sparse_igno
     return repo
 
 
-def rebase_and_push(repo: Repo, branch_name: str, remote_name: str = remote_una_name, rebase: bool = True):
-    print(f"Rebasing current branch upon {branch_name}...")
+def merge_and_push(repo: Repo, branch_name: str, remote_name: str = remote_una_name):
+    print(f"Merging changes from {branch_name}...")
     # These will raise exceptions on failure, which will stop the script
-    if rebase:
-        repo.git.rebase(branch_name)
+    repo.git.merge(branch_name)
 
-    print("Creating automatic rebase commit...")
-    # allow-empty to ensure we always have the 'rebase' marker if requested
-    repo.git.commit("--allow-empty", "-m", "rebase")
-
-    print(f"Pushing rebased branch to {remote_name}...")
+    print(f"Pushing merged branch to {remote_name}...")
     refspec = f"refs/heads/{repo.active_branch.name}:refs/heads/{repo.active_branch.name}"
     repo.remotes[remote_name].push(refspec, force=True, progress=TqdmProgress())
 
@@ -206,8 +201,8 @@ def save_and_push(repo: Repo, branch_name: str, tag: str, remote_name: str = rem
     except Exception as e:
         print(f"Nothing to commit or commit failed: {e}")
 
-    # Rebase and push the branch first
-    rebase_and_push(repo, branch_name, remote_name=remote_name)
+    # Merge latest and push the branch first
+    merge_and_push(repo, branch_name, remote_name=remote_name)
     
     # Create and push tag on the final result
     print(f"Creating tag: {tag}")
