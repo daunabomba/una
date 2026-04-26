@@ -946,15 +946,12 @@ def main():
             if remote_prefix == "una":
                 target_branch = "una/una"
             else:
-                # Prioritize tag as the rebase base if specified in config
-                tag_name = cfg.get("tag")
-                if tag_name:
-                    target_branch = tag_name
-                else:
-                    branch = cfg.get("branch")
-                    if not branch:
-                        branch = get_remote_head(repo, remote_prefix)
-                    target_branch = f"{remote_prefix}/{branch}"
+                # Prioritize upstream branch (explicit or discovered) over tag for rebasing
+                # this ensures that if an origin is present, we follow its progression.
+                branch = cfg.get("branch")
+                if not branch:
+                    branch = get_remote_head(repo, remote_prefix)
+                target_branch = f"{remote_prefix}/{branch}"
             
             if tag:
                 save_and_push(repo, target_branch, tag)
