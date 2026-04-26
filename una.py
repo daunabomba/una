@@ -423,8 +423,9 @@ def main():
     )
     parser.add_argument(
         "--rebase",
-        action="store_true",
-        help="Rebase the local branch onto the upstream branch (with squash) and push to una.",
+        nargs="?",
+        const="ALL",
+        help="Rebase the local branch onto the upstream branch (with squash) and push to una. Optional: specify a single repo name.",
     )
     parser.add_argument(
         "--arch",
@@ -911,23 +912,30 @@ def main():
         # Handle top-level repository
         top_repo_path = BASE_DIR
         if top_repo_path not in processed_dirs:
-            print(f"\n--- Top-level Repository (una) ---")
-            top_repo = Repo(top_repo_path)
-            # Fetch from 'una' remote
-            if tag or args.rebase:
+            # Only rebase top-level if we are doing ALL or if explicitly named "una"
+            # or if we are doing a global --save (tag is set)
+            if tag or args.rebase == "ALL" or args.rebase == "una":
+                print(f"\n--- Top-level Repository (una) ---")
+                top_repo = Repo(top_repo_path)
+                # Fetch from 'una' remote
                 print("Fetching from 'una'...")
                 top_repo.remotes.una.fetch(progress=TqdmProgress())
-            
-            # For top-level, we assume 'una' branch rebasing onto 'una/una'
-            target_branch = "una/una" 
-            if tag:
-                save_and_push(top_repo, target_branch, tag, remote_name="una")
-            elif args.rebase:
-                rebase_and_push(top_repo, target_branch, remote_name="una", squash=True)
-            processed_dirs.add(top_repo_path)
+                
+                # For top-level, we assume 'una' branch rebasing onto 'una/una'
+                target_branch = "una/una" 
+                if tag:
+                    save_and_push(top_repo, target_branch, tag, remote_name="una")
+                elif args.rebase:
+                    rebase_and_push(top_repo, target_branch, remote_name="una", squash=True)
+                processed_dirs.add(top_repo_path)
 
         # Handle sub-repositories
         for cfg in repos_to_process:
+            # Only rebase if we are doing ALL or if this repo matches the name
+            # or if we are doing a global --save (tag is set)
+            if not (tag or args.rebase == "ALL" or args.rebase == cfg["name"]):
+                continue
+
             r_path = Path(cfg["repo_dir"]).absolute()
             if r_path in processed_dirs: continue
             
@@ -935,14 +943,13 @@ def main():
             repo = Repo(r_path)
             remote_prefix = "origin" if "origin_url" in cfg else "una"
             
-            # Automatic fetch before rebase/tag or on explicit request
-            if tag or args.rebase:
-                print(f"Fetching from {remote_prefix}...")
-                repo.remotes[remote_prefix].fetch(progress=TqdmProgress())
-                if remote_prefix == "origin" and "una" in repo.remotes:
-                    print("Also fetching from una...")
-                    repo.remotes.una.fetch(progress=TqdmProgress())
-
+            # Automatic fetch before rebase/tag
+            print(f"Fetching from {remote_prefix}...")
+            repo.remotes[remote_prefix].fetch(progress=TqdmProgress())
+            if remote_prefix == "origin" and "una" in repo.remotes:
+                print("Also fetching from una...")
+                repo.remotes.una.fetch(progress=TqdmProgress())
+            
             if remote_prefix == "una":
                 target_branch = "una/una"
             else:
