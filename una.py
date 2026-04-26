@@ -481,6 +481,11 @@ def main():
         default="confs/default.conf",
         help="Path to the repository configuration file. Default: confs/default.conf",
     )
+    parser.add_argument(
+        "--report",
+        action="store_true",
+        help="Generate a summary of changes in the repositories.",
+    )
 
     args = parser.parse_args()
     
@@ -1058,6 +1063,88 @@ def main():
             print("ERROR: Top-level repository is dirty. Stopping global cleanup.")
             sys.exit(1)
         subprocess.run(["git", "clean", "-xfd", "-e", "bld/", "-e", "repo/"], cwd=BASE_DIR)
+
+    if args.report:
+        from git import Repo
+        import subprocess
+
+        print("\n=== Generating Change Report ===")
+        report_dir = bld_base / "report"
+        report_dir.mkdir(parents=True, exist_ok=True)
+
+        summary_file = report_dir / "summary.txt"
+        summary_lines = []
+
+        processed_dirs = set()
+        
+        # Include top-level repo ("una") if it's a git repo
+        all_repos_to_report = []
+        if (BASE_DIR / ".git").exists():
+            all_repos_to_report.append({"name": "una", "repo_dir": BASE_DIR})
+        all_repos_to_report.extend(repos)
+
+        for cfg in all_repos_to_report:
+            r_path = Path(cfg["repo_dir"]).absolute()
+            if r_path in processed_dirs: continue
+            if not r_path.exists() or not (r_path / ".git").exists():
+                continue
+
+            repo = Repo(r_path)
+            name = cfg["name"]
+
+            # Determine target branch/tag (consistent with rebase logic)
+            remote_prefix = "origin" if "origin_url" in cfg else "una"
+            if name == "una":
+                remote_prefix = "una"
+                target = "una/una"
+            else:
+                branch = cfg.get("branch")
+                tag_name = cfg.get("tag")
+                if branch:
+                    target = f"{remote_prefix}/{branch}"
+                elif tag_name:
+                    target = tag_name
+                else:
+                    target = f"{remote_prefix}/{get_remote_head(repo, remote_prefix)}"
+
+            print(f"[{name}] Comparing against {target}...")
+
+            try:
+                # 1. Get diffstat
+                diffstat = repo.git.diff(target, "--stat")
+                # 2. Get full diff
+                full_diff = repo.git.diff(target)
+                
+                # If there are no changes, we still record it
+                if not diffstat.strip():
+                    diffstat = "No changes."
+                    full_diff = ""
+
+                # Write full diff to a file
+                diff_filename = f"{name}.diff"
+                diff_file = report_dir / diff_filename
+                diff_file.write_text(full_diff)
+
+                # Add to summary
+                summary_lines.append(f"Repository: {name}")
+                summary_lines.append(f"Base:       {target}")
+                summary_lines.append(f"Full Diff:  {diff_filename}")
+                summary_lines.append("Diff Stat:")
+                summary_lines.append(diffstat)
+                summary_lines.append("-" * 60)
+                summary_lines.append("")
+
+            except Exception as e:
+                print(f"[{name}] Error generating diff: {e}")
+                summary_lines.append(f"Repository: {name}")
+                summary_lines.append(f"Error: {e}")
+                summary_lines.append("-" * 60)
+                summary_lines.append("")
+
+            processed_dirs.add(r_path)
+
+        summary_file.write_text("\n".join(summary_lines))
+        print(f"\nReport complete. Summary written to: {summary_file}")
 
 
 if __name__ == "__main__":
