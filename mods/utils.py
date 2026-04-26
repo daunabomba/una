@@ -10,29 +10,33 @@ remote_una_name = "una"
 
 def get_remote_head(repo, remote_name):
     """
-    Determines the default branch (HEAD) of a remote using 'git ls-remote --symref'.
-    Also updates the local remote HEAD marker.
+    Determines the default branch (HEAD) of a remote.
+    Tries ls-remote first, then falls back to local remote HEAD marker,
+    then tries common defaults.
     """
-    try:
-        # First, try to update the local remote HEAD marker
-        repo.git.remote("set-head", remote_name, "-a")
-        
-        # Then, try to get it from the symref
-        out = repo.git.ls_remote("--symref", remote_name, "HEAD")
-        for line in out.splitlines():
-            if line.startswith("ref:"):
-                # Example: "ref: refs/heads/main\tHEAD"
-                ref_part = line.split()[1] # "refs/heads/main"
-                return ref_part.rsplit("/", 1)[-1]
-    except Exception as e:
-        print(f"Warning: Could not determine HEAD for remote '{remote_name}': {e}")
-    
-    # Fallback to checking the local remote HEAD ref if set-head succeeded
+    # 1. Try to get it from local remote HEAD ref (fast, no network)
     try:
         head_ref = repo.remotes[remote_name].refs.HEAD
         return head_ref.ref.name.rsplit("/", 1)[-1]
     except (IndexError, AttributeError, ValueError):
         pass
+
+    # 2. Try network discovery
+    try:
+        # Update the local remote HEAD marker
+        repo.git.remote("set-head", remote_name, "-a")
+        out = repo.git.ls_remote("--symref", remote_name, "HEAD")
+        for line in out.splitlines():
+            if line.startswith("ref:"):
+                ref_part = line.split()[1] # "refs/heads/main"
+                return ref_part.rsplit("/", 1)[-1]
+    except Exception as e:
+        print(f"Warning: Network discovery of HEAD for remote '{remote_name}' failed: {e}")
+    
+    # 3. Last resort fallbacks
+    for b in ["master", "main"]:
+        if f"refs/remotes/{remote_name}/{b}" in repo.refs:
+            return b
 
     return "master" # Final fallback
 
@@ -204,29 +208,48 @@ def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, sparse_igno
 def rebase_and_push(repo: Repo, branch_name: str, remote_name: str = remote_una_name, squash: bool = True, tag: str = None):
     print(f"Rebasing current branch upon {branch_name} (squash={squash}, tag={tag})...")
     
-    if squash:
-        # 1. Perform a real rebase first to ensure patches are correctly applied to the new code
-        print(f"Applying patches via rebase onto {branch_name}...")
-        repo.git.rebase(branch_name)
-        
-        # 2. Reset soft to the target branch to squash the results into one commit
-        print("Squashing history into a single commit...")
-        repo.git.reset("--soft", branch_name)
-        
-        # 3. Commit the squashed changes
-        msg = f"una: squashed update from {branch_name}"
-        if tag:
-            msg = f"una: squashed update to tag {tag} (on {branch_name})"
+    try:
+        if squash:
+            # 1. Perform a real rebase first to ensure patches are correctly applied to the new code
+            print(f"Applying patches via rebase onto {branch_name}...")
+            repo.git.rebase(branch_name)
             
+            # Check if we are actually different from the base. 
+            # If our tree is identical to the base, and we have no commits to squash, we should skip.
+            if repo.head.commit.tree == repo.commit(branch_name).tree:
+                print(f"Already up to date with {branch_name}; skipping squash commit.")
+                # We still want to push if we just moved our branch to match upstream
+            else:
+                # 2. Reset soft to the target branch to squash the results into one commit
+                print("Squashing history into a single commit...")
+                repo.git.reset("--soft", branch_name)
+                
+                # 3. Commit the squashed changes
+                msg = f"una: squashed update from {branch_name}"
+                if tag:
+                    msg = f"una: squashed update to tag {tag} (on {branch_name})"
+                    
+                try:
+                    repo.git.commit("-m", msg)
+                except:
+                    print("No changes to squash; already up to date.")
+        else:
+            # Standard rebase
+            repo.git.rebase(branch_name)
+            # Create an automatic rebase marker if not squashing
+            repo.git.commit("--allow-empty", "-m", "rebase")
+    except Exception as e:
+        print(f"\nERROR: Rebase failed for {repo.working_dir}")
+        print(f"Target: {branch_name}")
+        print(f"Details: {e}")
         try:
-            repo.git.commit("-m", msg)
+            print("Attempting to abort rebase...")
+            repo.git.rebase("--abort")
         except:
-            print("No changes to squash; already up to date.")
-    else:
-        # Standard rebase
-        repo.git.rebase(branch_name)
-        # Create an automatic rebase marker if not squashing
-        repo.git.commit("--allow-empty", "-m", "rebase")
+            pass
+        raise
+
+    print(f"Force-pushing rebased/squashed branch to {remote_name} (pruning history)...")
 
     print(f"Force-pushing rebased/squashed branch to {remote_name} (pruning history)...")
     try:
