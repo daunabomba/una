@@ -946,14 +946,21 @@ def main():
             if remote_prefix == "una":
                 target_branch = "una/una"
             else:
-                # Infer rebase target from upstream origin:
-                # 1. Use 'branch' if explicitly set in config.
-                # 2. Otherwise, automatically discover the remote HEAD (e.g. master/main)
-                # Note: 'tag' in config is ignored for rebase if origin is present to allow tracking.
+                # Infer rebase target based on component type:
+                # - 'base' components track the upstream branch (master/main) by default.
+                # - Other components (host, other) prioritize the pinned 'tag' if present.
                 branch = cfg.get("branch")
-                if not branch:
+                tag_name = cfg.get("tag")
+                
+                if branch:
+                    target_branch = f"{remote_prefix}/{branch}"
+                elif cfg.get("type") == "base" or not tag_name:
+                    # For base libs or if no tag is specified, follow upstream HEAD
                     branch = get_remote_head(repo, remote_prefix)
-                target_branch = f"{remote_prefix}/{branch}"
+                    target_branch = f"{remote_prefix}/{branch}"
+                else:
+                    # Respect the pinned tag for host tools and other non-base components
+                    target_branch = tag_name
             
             if tag:
                 save_and_push(repo, target_branch, tag)
