@@ -946,19 +946,14 @@ def main():
             if remote_prefix == "una":
                 target_branch = "una/una"
             else:
-                # Target selection for rebase/save:
-                # 1. Explicitly configured branch override
-                # 2. Configured version tag (pins the rebase to a specific release)
-                # 3. Discovery of the remote HEAD
+                # Infer rebase target from upstream origin:
+                # 1. Use 'branch' if explicitly set in config.
+                # 2. Otherwise, automatically discover the remote HEAD (e.g. master/main)
+                # Note: 'tag' in config is ignored for rebase if origin is present to allow tracking.
                 branch = cfg.get("branch")
-                tag_name = cfg.get("tag")
-                
-                if branch:
-                    target_branch = f"{remote_prefix}/{branch}"
-                elif tag_name:
-                    target_branch = tag_name
-                else:
-                    target_branch = f"{remote_prefix}/{get_remote_head(repo, remote_prefix)}"
+                if not branch:
+                    branch = get_remote_head(repo, remote_prefix)
+                target_branch = f"{remote_prefix}/{branch}"
             
             if tag:
                 save_and_push(repo, target_branch, tag)

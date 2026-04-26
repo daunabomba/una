@@ -11,32 +11,36 @@ remote_una_name = "una"
 def get_remote_head(repo, remote_name):
     """
     Determines the default branch (HEAD) of a remote.
-    Tries ls-remote first, then falls back to local remote HEAD marker,
-    then tries common defaults.
+    Prioritizes live 'ls-remote' discovery to ensure we follow the upstream move (e.g. master -> main).
     """
-    # 1. Try to get it from local remote HEAD ref (fast, no network)
+    # 1. Try network discovery (Source of Truth)
     try:
-        head_ref = repo.remotes[remote_name].refs.HEAD
-        return head_ref.ref.name.rsplit("/", 1)[-1]
-    except (IndexError, AttributeError, ValueError):
-        pass
-
-    # 2. Try network discovery
-    try:
-        # Update the local remote HEAD marker
-        repo.git.remote("set-head", remote_name, "-a")
         out = repo.git.ls_remote("--symref", remote_name, "HEAD")
         for line in out.splitlines():
             if line.startswith("ref:"):
+                # Example: "ref: refs/heads/main\tHEAD"
                 ref_part = line.split()[1] # "refs/heads/main"
-                return ref_part.rsplit("/", 1)[-1]
+                branch = ref_part.rsplit("/", 1)[-1]
+                # Update local remote HEAD marker for future fast-lookups
+                try: repo.git.remote("set-head", remote_name, branch)
+                except: pass
+                return branch
     except Exception as e:
-        print(f"Warning: Network discovery of HEAD for remote '{remote_name}' failed: {e}")
+        print(f"Warning: ls-remote discovery of HEAD for remote '{remote_name}' failed: {e}")
+
+    # 2. Fallback to local remote HEAD ref
+    try:
+        head_ref = repo.remotes[remote_name].refs.HEAD
+        return head_ref.ref.name.rsplit("/", 1)[-1]
+    except (IndexError, AttributeError, ValueError, Exception):
+        pass
     
-    # 3. Last resort fallbacks
+    # 3. Last resort fallbacks based on existing local remote refs
     for b in ["master", "main"]:
-        if f"refs/remotes/{remote_name}/{b}" in repo.refs:
-            return b
+        try:
+            if f"refs/remotes/{remote_name}/{b}" in repo.refs:
+                return b
+        except: pass
 
     return "master" # Final fallback
 
