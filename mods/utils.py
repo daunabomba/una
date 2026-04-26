@@ -205,11 +205,15 @@ def rebase_and_push(repo: Repo, branch_name: str, remote_name: str = remote_una_
     print(f"Rebasing current branch upon {branch_name} (squash={squash}, tag={tag})...")
     
     if squash:
-        # 1. Reset to the target branch (keeps all local changes staged in index)
-        # This effectively 'squashes' everything into a single set of changes on top of branch_name
+        # 1. Perform a real rebase first to ensure patches are correctly applied to the new code
+        print(f"Applying patches via rebase onto {branch_name}...")
+        repo.git.rebase(branch_name)
+        
+        # 2. Reset soft to the target branch to squash the results into one commit
+        print("Squashing history into a single commit...")
         repo.git.reset("--soft", branch_name)
         
-        # 2. Commit the squashed changes
+        # 3. Commit the squashed changes
         msg = f"una: squashed update from {branch_name}"
         if tag:
             msg = f"una: squashed update to tag {tag} (on {branch_name})"
@@ -218,7 +222,6 @@ def rebase_and_push(repo: Repo, branch_name: str, remote_name: str = remote_una_
             repo.git.commit("-m", msg)
         except:
             print("No changes to squash; already up to date.")
-            # We still need to push if we want to ensure remote matches local
     else:
         # Standard rebase
         repo.git.rebase(branch_name)
