@@ -1077,11 +1077,8 @@ def main():
 
         processed_dirs = set()
         
-        # Include top-level repo ("una") if it's a git repo
-        all_repos_to_report = []
-        if (BASE_DIR / ".git").exists():
-            all_repos_to_report.append({"name": "una", "repo_dir": BASE_DIR})
-        all_repos_to_report.extend(repos)
+        # Include all repositories from configuration
+        all_repos_to_report = repos
 
         for cfg in all_repos_to_report:
             r_path = Path(cfg["repo_dir"]).absolute()
