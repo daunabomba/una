@@ -25,12 +25,9 @@ Una is a build tool designed to create a custom, minimal Linux system based on t
 ## Getting Started
 
 ### 1. Initialization
-First, initialize the repository environment. This clones all necessary repositories and sets up the build directories.
+Initialization happens automatically when you run any command. Una will detect missing repositories from your configuration and clone them.
 
-```bash
-python una.py --init [BASE_URL]
-```
-*Note: If you have a remote named `una` configured, it will attempt to detect the base URL automatically. Use `--init-with-origin` to also pull from official upstream remotes.*
+If your top-level repository has a remote named `una`, Una will automatically use that as the base URL for component repositories.
 
 ### 2. Building
 
@@ -101,9 +98,33 @@ The top-level `una.py` sets environment variables like `CFLAGS`, `CXXFLAGS`, and
 - **Save Changes**: `python una.py --save "tag"` (Stage, commit, tag, and push changes across all repos).
 - **Checkout Tag**: `python una.py --checkout "tag"` (Switch all repositories to a specific tag).
 - **Rebase**: `python una.py --rebase` (Fetch and rebase local branches onto upstream branches with squashing for a clean history).
-- **Git Config**: `python una.py --git-config key=value` (Pass arbitrary git config to all operations, e.g. SSH keys).
+- **Change Report**: `python una.py --report` (Generate a summary of all local changes in the `bld/report/` directory).
 - **Clean**: `python una.py --clean` (Global cleanup of build artifacts and environment; safe check for dirty repos).
-- **List Repos**: `python una.py --list all` (List all managed repositories).
+- **List Repos**: `python una.py --list [type]` (List managed repositories).
+  - Use `all` to see everything.
+  - Use `host`, `base`, or `other` to filter by type.
+
+### Component Types
+
+When listing or configuring repositories, they are categorized into three main types:
+
+*   **host**: These are tools that run on your computer to help build the system (like compilers). They are built first.
+*   **base**: These are the fundamental parts of the target system, like the C library (`musl`) and system headers. They form the foundation that everything else sits on.
+*   **other**: these are the "extra" parts of the system, like applications (BusyBox), security tools (OpenSSL), or the final kernel image itself.
+
+## How Repositories are Specified
+
+Repositories are defined in configuration files (like `confs/default.conf`). You don't need to be a programmer to understand or edit these. Each repository has its own section:
+
+```ini
+[busybox]                # The name of the component
+una_repo = busybox.git   # Where it lives on the server
+repo_dir = repo/busybox  # Where it will be stored on your computer
+type = other             # What kind of component it is (host/base/other)
+tag = 1_37_0             # (Optional) A specific version to use
+```
+
+You can also make one component "copy" settings from another using `ref = name`. This is useful for things like the Linux kernel, where you might have one entry for the "headers" and another for the "image", both sharing the same source code.
 108: 
 109: ## Advanced Configuration
 110: 

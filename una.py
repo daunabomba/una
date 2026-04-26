@@ -1091,18 +1091,14 @@ def main():
 
             # Determine target branch/tag (consistent with rebase logic)
             remote_prefix = "origin" if "origin_url" in cfg else "una"
-            if name == "una":
-                remote_prefix = "una"
-                target = "una/una"
+            branch = cfg.get("branch")
+            tag_name = cfg.get("tag")
+            if branch:
+                target = f"{remote_prefix}/{branch}"
+            elif tag_name:
+                target = tag_name
             else:
-                branch = cfg.get("branch")
-                tag_name = cfg.get("tag")
-                if branch:
-                    target = f"{remote_prefix}/{branch}"
-                elif tag_name:
-                    target = tag_name
-                else:
-                    target = f"{remote_prefix}/{get_remote_head(repo, remote_prefix)}"
+                target = f"{remote_prefix}/{get_remote_head(repo, remote_prefix)}"
 
             print(f"[{name}] Comparing against {target}...")
 
