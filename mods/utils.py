@@ -3,6 +3,7 @@ import shutil
 import os
 import sys
 from tqdm import tqdm
+from mods import colors
 
 default_branch = "una"
 remote_una_name = "una"
@@ -26,7 +27,7 @@ def get_remote_head(repo, remote_name):
                 except: pass
                 return branch
     except Exception as e:
-        print(f"Warning: ls-remote discovery of HEAD for remote '{remote_name}' failed: {e}")
+        colors.warn(f"Warning: ls-remote discovery of HEAD for remote '{remote_name}' failed: {e}")
 
     # 2. Fallback to local remote HEAD ref
     try:
@@ -81,10 +82,10 @@ def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, sparse_igno
     If reset=True, it performs a hard reset to match the remote 'una' branch.
     If tag is provided, it checks out that specific tag.
     """
-    print(f"Syncing repo: {repo_dir}")
+    colors.info(f"Syncing repo: {repo_dir}")
     if not os.path.exists(repo_dir):
         clone_url = origin_url if with_origin else una_url
-        print(f"Cloning repo into {repo_dir} from {clone_url}...")
+        colors.info(f"Cloning repo into {repo_dir} from {clone_url}...")
         repo = Repo.clone_from(clone_url, repo_dir, progress=TqdmProgress())
         if not with_origin:
             # If we cloned from una_url, it's currently named 'origin'. Rename it to 'una'.
@@ -99,7 +100,7 @@ def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, sparse_igno
             repo.create_remote("origin", origin_url)
         else:
             if str(repo.remotes.origin.url) != origin_url:
-                print(f"Updating origin URL for {repo_dir}")
+                colors.info(f"Updating origin URL for {repo_dir}")
                 repo.remotes.origin.set_url(origin_url)
         
         # Ensure wildcard refspec so we see ALL branches (fixes the 'master' only issue)
@@ -108,11 +109,11 @@ def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, sparse_igno
         except: pass
         
         if current_fetch != "+refs/heads/*:refs/remotes/origin/*":
-            print(f"Updating origin fetch refspec for {repo_dir}...")
+            colors.info(f"Updating origin fetch refspec for {repo_dir}...")
             repo.git.config("remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
 
         if reset:
-            print("Fetching latest changes from origin...")
+            colors.info("Fetching latest changes from origin...")
             repo.remotes.origin.fetch(progress=TqdmProgress(), prune=True)
 
     # 2. Update Una Remote
@@ -120,19 +121,19 @@ def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, sparse_igno
         repo.create_remote(remote_una_name, una_url)
     else:
         if str(repo.remotes[remote_una_name].url) != una_url:
-             print(f"Updating una URL for {repo_dir}")
+             colors.info(f"Updating una URL for {repo_dir}")
              repo.remotes[remote_una_name].set_url(una_url)
 
     # Ensure wildcard refspec for una
     repo.git.config(f"remote.{remote_una_name}.fetch", f"+refs/heads/*:refs/remotes/{remote_una_name}/*")
 
     if reset:
-        print(f"Fetching latest changes from {remote_una_name}...")
+        colors.info(f"Fetching latest changes from {remote_una_name}...")
         try:
             repo.remotes[remote_una_name].fetch(progress=TqdmProgress(), tags=True, prune=True)
         except Exception as e:
-            print(f"\nError: Failed to fetch from remote '{remote_una_name}' at {una_url}")
-            print(f"Git Error Details: {e}")
+            colors.error(f"\nError: Failed to fetch from remote '{remote_una_name}' at {una_url}")
+            colors.error(f"Git Error Details: {e}")
             sys.exit(1)
 
     # 3. Sparse Checkout Management
@@ -160,7 +161,7 @@ def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, sparse_igno
     if tag:
         try:
             remote_ref = repo.remotes.una.refs[default_branch]
-            print(f"Found existing '{default_branch}' branch on remote. Checking it out to preserve patches...")
+            colors.info(f"Found existing '{default_branch}' branch on remote. Checking it out to preserve patches...")
             if default_branch in repo.heads:
                 repo.heads[default_branch].set_tracking_branch(remote_ref)
                 repo.heads[default_branch].checkout()
@@ -168,9 +169,9 @@ def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, sparse_igno
                 local_branch = repo.create_head(default_branch, remote_ref)
                 local_branch.set_tracking_branch(remote_ref)
                 local_branch.checkout()
-            print(f"Note: You can now run '--rebase' to move your patches onto tag '{tag}'.")
+            colors.info(f"Note: You can now run '--rebase' to move your patches onto tag '{tag}'.")
         except (IndexError, AttributeError):
-            print(f"No remote '{default_branch}' branch found. Initializing branch '{default_branch}' from tag '{tag}'...")
+            colors.info(f"No remote '{default_branch}' branch found. Initializing branch '{default_branch}' from tag '{tag}'...")
             # Start fresh from the tag since no project branch exists yet
             repo.git.checkout("-B", default_branch, tag)
         return repo
@@ -185,14 +186,14 @@ def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, sparse_igno
     except: pass
 
     if unpushed or repo.is_dirty(untracked_files=True):
-        print("\n" + "!" * 80)
-        print(f"WARNING: Repository {repo_dir} has local changes that will be LOST during reset!")
-        print("!" * 80 + "\n")
+        colors.warn("\n" + "!" * 80)
+        colors.warn(f"WARNING: Repository {repo_dir} has local changes that will be LOST during reset!")
+        colors.warn("!" * 80 + "\n")
 
     try:
         remote_ref = repo.remotes.una.refs[default_branch]
     except (IndexError, AttributeError):
-        print(f"Error: Branch '{default_branch}' not found on remote '{remote_una_name}'.")
+        colors.error(f"Error: Branch '{default_branch}' not found on remote '{remote_una_name}'.")
         sys.exit(1)
 
     if default_branch in repo.heads:
@@ -210,22 +211,22 @@ def init_or_reset_repo(repo_dir: str, origin_url: str, una_url: str, sparse_igno
 
 
 def rebase_and_push(repo: Repo, branch_name: str, remote_name: str = remote_una_name, squash: bool = True, tag: str = None):
-    print(f"Rebasing current branch upon {branch_name} (squash={squash}, tag={tag})...")
+    colors.info(f"Rebasing current branch upon {branch_name} (squash={squash}, tag={tag})...")
     
     try:
         if squash:
             # 1. Perform a real rebase first to ensure patches are correctly applied to the new code
-            print(f"Applying patches via rebase onto {branch_name}...")
+            colors.info(f"Applying patches via rebase onto {branch_name}...")
             repo.git.rebase(branch_name)
             
             # Check if we are actually different from the base. 
             # If our tree is identical to the base, and we have no commits to squash, we should skip.
             if repo.head.commit.tree == repo.commit(branch_name).tree:
-                print(f"Already up to date with {branch_name}; skipping squash commit.")
+                colors.info(f"Already up to date with {branch_name}; skipping squash commit.")
                 # We still want to push if we just moved our branch to match upstream
             else:
                 # 2. Reset soft to the target branch to squash the results into one commit
-                print("Squashing history into a single commit...")
+                colors.info("Squashing history into a single commit...")
                 repo.git.reset("--soft", branch_name)
                 
                 # 3. Commit the squashed changes
@@ -236,16 +237,16 @@ def rebase_and_push(repo: Repo, branch_name: str, remote_name: str = remote_una_
                 try:
                     repo.git.commit("-m", msg)
                 except:
-                    print("No changes to squash; already up to date.")
+                    colors.info("No changes to squash; already up to date.")
         else:
             # Standard rebase
             repo.git.rebase(branch_name)
             # Create an automatic rebase marker if not squashing
             repo.git.commit("--allow-empty", "-m", "rebase")
     except Exception as e:
-        print(f"\nERROR: Rebase failed for {repo.working_dir}")
-        print(f"Target: {branch_name}")
-        print(f"Details: {e}")
+        colors.error(f"\nERROR: Rebase failed for {repo.working_dir}")
+        colors.error(f"Target: {branch_name}")
+        colors.error(f"Details: {e}")
         try:
             print("Attempting to abort rebase...")
             repo.git.rebase("--abort")
@@ -253,7 +254,7 @@ def rebase_and_push(repo: Repo, branch_name: str, remote_name: str = remote_una_
             pass
         raise
 
-    print(f"Force-pushing rebased/squashed branch to {remote_name} (pruning history)...")
+    colors.info(f"Force-pushing rebased/squashed branch to {remote_name} (pruning history)...")
 
     print(f"Force-pushing rebased/squashed branch to {remote_name} (pruning history)...")
     try:
@@ -266,23 +267,23 @@ def rebase_and_push(repo: Repo, branch_name: str, remote_name: str = remote_una_
 
 
 def save_and_push(repo: Repo, branch_name: str, tag: str, remote_name: str = remote_una_name):
-    print(f"Staging all changes in {repo.working_dir}...")
+    colors.info(f"Staging all changes in {repo.working_dir}...")
     repo.git.add(A=True)
     
     try:
-        print(f"Committing with message: {tag}")
+        colors.info(f"Committing with message: {tag}")
         repo.git.commit("-m", tag)
     except Exception as e:
-        print(f"Nothing to commit or commit failed: {e}")
+        colors.warn(f"Nothing to commit or commit failed: {e}")
 
     # Rebase latest and push the branch first (always squash for 'una' updates)
     rebase_and_push(repo, branch_name, remote_name=remote_name, squash=True)
     
     # Create and push tag on the final result
-    print(f"Creating tag: {tag}")
+    colors.info(f"Creating tag: {tag}")
     repo.create_tag(tag, force=True)
     
-    print(f"Pushing tag '{tag}' to {remote_name}...")
+    colors.info(f"Pushing tag '{tag}' to {remote_name}...")
     repo.remotes[remote_name].push(f"refs/tags/{tag}:refs/tags/{tag}", force=True)
 
 

@@ -15,6 +15,7 @@ if str(BASE_DIR) not in sys.path:
 
 from mods.utils import init_or_reset_repo, rebase_and_push, save_and_push, get_target_triple, get_arch_flags, TqdmProgress, get_remote_head
 from mods.snapshot import take_snapshot, compare_snapshots, write_report, get_report_paths
+from mods import colors
 
 bld_base = BASE_DIR / "bld"
 skel_dir = BASE_DIR / "skel"
@@ -29,7 +30,7 @@ def load_repo_una(repo_dir: str, una_file_name: str = "una.py"):
     """
     una_file = Path(repo_dir) / una_file_name
     if not una_file.exists():
-        print(f"Error: {una_file} not found. Build script is missing for this component.")
+        colors.error(f"Error: {una_file} not found. Build script is missing for this component.")
         sys.exit(1)
     
     # Create a unique module name based on repo name and script name
@@ -53,13 +54,13 @@ class StepRunner:
 
     def run_step(self, cfg, step_name, step_func, **kwargs):
         name = cfg["name"]
-        print(f"[{self.arch}] Running {name}::{step_name}...")
+        colors.info(f"[{self.arch}] Running {name}::{step_name}...")
         
         # 1. Cleanup and Pre-snapshot on first call for this component
         if name not in self.cleaned_components:
             report_file = bld_base / self.arch / "report" / f"{name}.txt"
             if report_file.exists():
-                print(f"[{self.arch}] Cleaning up previous build outputs for {name}...")
+                colors.info(f"[{self.arch}] Cleaning up previous build outputs for {name}...")
                 paths = get_report_paths(report_file)
                 for p in paths:
                     try:
@@ -68,7 +69,7 @@ class StepRunner:
                         elif p.startswith("target/"):
                             (self.target_dir / p[7:]).unlink(missing_ok=True)
                     except Exception as e:
-                        print(f"[{self.arch}] Warning: Failed to remove {p}: {e}")
+                        colors.warn(f"[{self.arch}] Warning: Failed to remove {p}: {e}")
             
             self.component_snapshots[name] = {
                 "staging": take_snapshot(self.staging_dir),
@@ -88,9 +89,9 @@ class StepRunner:
         added_t, mod_t, del_t = compare_snapshots(pre["target"], post_target)
         
         if mod_s or del_s:
-            print(f"[{self.arch}] ERROR: {name} modified or deleted files in staging!")
+            colors.error(f"[{self.arch}] ERROR: {name} modified or deleted files in staging!")
         if mod_t or del_t:
-            print(f"[{self.arch}] ERROR: {name} modified or deleted files in target!")
+            colors.error(f"[{self.arch}] ERROR: {name} modified or deleted files in target!")
             
         # Compile combined report
         combined_added = {f"staging/{k}": v for k, v in added_s.items()}
@@ -227,7 +228,7 @@ def create_test_disk(disk_path):
         
         print("Test disk created successfully.")
     except Exception as e:
-        print(f"Error creating test disk: {e}")
+        colors.error(f"Error creating test disk: {e}")
         if disk_path.exists(): disk_path.unlink()
         raise
     finally:
@@ -238,7 +239,7 @@ def propagate_skel(staging_dir, target_dir):
     """Skel propagation using original file-by-file method + snapshot verification"""
     import subprocess
 
-    print("Propagating skeleton (original method)...")
+    colors.info("Propagating skeleton (original method)...")
 
     for dest in [staging_dir, target_dir]:
         # ORIGINAL logic: Handle ONLY symlink/dir conflicts
@@ -247,7 +248,7 @@ def propagate_skel(staging_dir, target_dir):
             d_item = dest / item
 
             if d_item.exists() and s_item.is_symlink() and d_item.is_dir() and not d_item.is_symlink():
-                print(f"Removing conflicting directory {d_item} to preserve skel symlink.")
+                colors.warn(f"Removing conflicting directory {d_item} to preserve skel symlink.")
                 shutil.rmtree(d_item)
 
         # ORIGINAL cp -a --remove-destination (robust merge)
@@ -273,7 +274,7 @@ def save_repo_state(cfg: dict):
 def load_repo_config(config_path: Path):
     cp = configparser.ConfigParser()
     if not config_path.exists():
-        print(f"Error: Config file {config_path} not found.")
+        colors.error(f"Error: Config file {config_path} not found.")
         sys.exit(1)
         
     cp.read(config_path)
@@ -297,10 +298,10 @@ def load_repo_config(config_path: Path):
         while 'ref' in current_cfg:
             ref_name = current_cfg['ref']
             if ref_name in visited:
-                print(f"Error: Circular reference detected for repo {name}")
+                colors.error(f"Error: Circular reference detected for repo {name}")
                 sys.exit(1)
             if ref_name not in raw_configs:
-                print(f"Error: Reference {ref_name} not found for {resolving_name}")
+                colors.error(f"Error: Reference {ref_name} not found for {resolving_name}")
                 sys.exit(1)
             
             # Combine parent into current (parent provides defaults, current overrides)
@@ -372,16 +373,16 @@ def remove_repo(name, repos, arches):
     """Removes a repository from the list, cleans build outputs and deletes repo dir."""
     target = next((r for r in repos if r["name"] == name), None)
     if not target:
-        print(f"Error: Repository '{name}' not found.")
+        colors.error(f"Error: Repository '{name}' not found.")
         return False
 
-    print(f"Removing repository '{name}'...")
+    colors.info(f"Removing repository '{name}'...")
     
     # 1. Clean build outputs for each architecture
     for arch in arches:
         report_file = bld_base / arch / "report" / f"{name}.txt"
         if report_file.exists():
-            print(f"[{arch}] Cleaning build outputs for {name}...")
+            colors.info(f"[{arch}] Cleaning build outputs for {name}...")
             paths = get_report_paths(report_file)
             staging_dir = bld_base / arch / "staging"
             target_dir = bld_base / arch / "target"
@@ -393,7 +394,7 @@ def remove_repo(name, repos, arches):
                     elif p.startswith("target/"):
                         (target_dir / p[7:]).unlink(missing_ok=True)
                 except Exception as e:
-                    print(f"[{arch}] Warning: Failed to remove {p}: {e}")
+                    colors.warn(f"[{arch}] Warning: Failed to remove {p}: {e}")
             report_file.unlink()
     
     # 2. Delete the repository directory
@@ -402,7 +403,7 @@ def remove_repo(name, repos, arches):
         print(f"Deleting repository directory: {repo_dir}")
         shutil.rmtree(repo_dir)
         
-    print(f"Repository '{name}' removed successfully.")
+    colors.info(f"Repository '{name}' removed successfully.")
     return True
 
 def main():
@@ -510,7 +511,7 @@ def main():
     
     for s_cfg in scanned:
         if s_cfg["name"] not in config_repo_names:
-            print(f"Repository '{s_cfg['name']}' found in repo/ but not in config. Removing...")
+            colors.warn(f"Repository '{s_cfg['name']}' found in repo/ but not in config. Removing...")
             remove_repo(s_cfg["name"], scanned, arches)
 
     # Automatic Sync/Init for repos
@@ -525,11 +526,11 @@ def main():
         
         if needs_reset:
             if not una_base:
-                print(f"Warning: New repository '{cfg['name']}' found in config but 'una' base URL is unknown. "
+                colors.warn(f"Warning: New repository '{cfg['name']}' found in config but 'una' base URL is unknown. "
                       "Please ensure the top-level repository has a remote named 'una' (e.g., git remote rename origin una). "
                       "Skipping initialization.")
                 continue
-            print(f"New repository '{cfg['name']}' detected. Initializing...")
+            colors.info(f"New repository '{cfg['name']}' detected. Initializing...")
         
         base = una_base or "UNKNOWN_BASE"
         if not base.endswith("/") and not base.endswith(":"):
@@ -567,7 +568,7 @@ def main():
         target_name = args.build
         repos_to_process = [r for r in repos if r["name"] == target_name]
         if not repos_to_process:
-            print(f"Error: Component '{target_name}' not found.")
+            colors.error(f"Error: Component '{target_name}' not found.")
             sys.exit(1)
     else:
         repos_to_process = repos
@@ -576,7 +577,7 @@ def main():
     if (args.build or args.rebase):
         missing = [r["name"] for r in repos_to_process if not Path(r["repo_dir"]).exists()]
         if missing:
-            print(f"Warning: The following repository directories are missing: {', '.join(missing)}")
+            colors.warn(f"Warning: The following repository directories are missing: {', '.join(missing)}")
             print("These should have been initialized automagically if a base URL was available.")
             sys.exit(1)
 
@@ -608,11 +609,11 @@ def main():
 
 
     if args.build:
-        print("Starting build process.")
+        colors.info("Starting build process.")
         all_possible_arches = ["x32", "x86_64", "aarch64", "riscv64"]
         host_repos = [r for r in repos_to_process if r["type"] == "host"]
         if host_repos and not args.no_build_host:
-            print("\n--- Host Stage ---")
+            colors.info("\n--- Host Stage ---")
             for r in host_repos:
                 module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
                 if hasattr(module, "host_configure"): module.host_configure(host_install_dir, arches=all_possible_arches)
@@ -621,7 +622,7 @@ def main():
 
         target_configs_to_build = [r for r in repos_to_process if r["type"] in ["base", "other"]]
         for arch in arches:
-            print(f"\n====== Target Stage: {arch} ======")
+            colors.info(f"\n====== Target Stage: {arch} ======")
             arch_bld_dir = bld_base / arch
             staging_dir = arch_bld_dir / "staging"
             target_dir = arch_bld_dir / "target"
@@ -631,7 +632,7 @@ def main():
             staging_dir.mkdir(parents=True, exist_ok=True)
             target_dir.mkdir(parents=True, exist_ok=True)
             if skel_dir.exists():
-                print(f"[{arch}] Phase -1: Skeleton Propagation (verified)")
+                colors.info(f"[{arch}] Phase -1: Skeleton Propagation (verified)")
                 skel_runner = StepRunner(arch, staging_dir, target_dir)
                 skel_runner.run_step(
                     cfg={"name": "skel"}, 
@@ -639,7 +640,7 @@ def main():
                     step_func=propagate_skel
                 )
             else:
-                print(f"[{arch}] No skel directory found - empty staging/target")
+                colors.warn(f"[{arch}] No skel directory found - empty staging/target")
 
             # Clean ALL target repos before build to avoid stale configs/artifacts between arches
             # This is critical for the kernel which relies on its .config in the source tree
@@ -651,13 +652,13 @@ def main():
                 r_path = Path(r["repo_dir"]).absolute()
                 if r_path in cleaned_dirs: continue
                 if r_path in host_dirs:
-                    print(f"[{arch}] Skipping git clean for {r['name']} (shared with host components)")
+                    colors.info(f"[{arch}] Skipping git clean for {r['name']} (shared with host components)")
                     continue
                 
-                print(f"[{arch}] Cleaning {r['name']} ({r['repo_dir']})...")
+                colors.info(f"[{arch}] Cleaning {r['name']} ({r['repo_dir']})...")
                 import subprocess
                 if is_repo_dirty(r_path):
-                    print(f"[{arch}] ERROR: Repository {r['name']} is dirty. Please commit or stash changes before building.")
+                    colors.error(f"[{arch}] ERROR: Repository {r['name']} is dirty. Please commit or stash changes before building.")
                     sys.exit(1)
                 subprocess.run(["git", "clean", "-fdx"], cwd=r_path, check=True)
                 # Ensure submodules are also cleaned to avoid arch-mismatch in static libs (e.g. nsd -> simdzone)
@@ -682,7 +683,7 @@ def main():
             musl_static_cfg = arch_bld_dir / "musl_static.cfg"
             
             if not musl_cfg.exists() or not musl_cxx_cfg.exists() or not musl_static_cfg.exists():
-                print(f"[{arch}] Generating compiler configurations...")
+                colors.info(f"[{arch}] Generating compiler configurations...")
                 arch_bld_dir.mkdir(parents=True, exist_ok=True)
                 lld_path = host_install_dir / "bin" / "ld.lld"
                 lib_p = staging_dir / "usr" / "lib"
@@ -707,7 +708,7 @@ def main():
 
             all_target_repos = [r for r in repos if r["type"] in ["base", "other"]]
 
-            print(f"[{arch}] Target Phase 0: System Headers (musl & linux-headers)")
+            colors.info(f"[{arch}] Target Phase 0: System Headers (musl & linux-headers)")
             for name in ["musl", "linux-headers"]:
                 proj = next((r for r in all_target_repos if r["name"] == name), None)
                 if proj and ((not args.build) or args.build == "ALL" or args.build == proj["name"]):
@@ -724,7 +725,7 @@ def main():
                     if hasattr(module, "target_configure"): runner.run_step(proj, "target_configure", module.target_configure, **kwargs)
                     if hasattr(module, "target_headers_install"): runner.run_step(proj, "target_headers_install", module.target_headers_install, **kwargs)
 
-            print(f"[{arch}] Target Phase 1: Core Base Library (musl)")
+            colors.info(f"[{arch}] Target Phase 1: Core Base Library (musl)")
             musl_proj = next((r for r in all_target_repos if r["name"] == "musl"), None)
             if musl_proj and ((not args.build) or args.build == "ALL" or args.build == musl_proj["name"]):
                 module = load_repo_una(musl_proj["repo_dir"], musl_proj.get("una_file", "una.py"))
@@ -736,7 +737,7 @@ def main():
                    if r["type"] == "base" and r["name"] not in ("musl", "linux-headers")
             ]
             if base_repos:
-                print(f"[{arch}] Target Phase 2: Base Components")
+                colors.info(f"[{arch}] Target Phase 2: Base Components")
                 for r in base_repos:
                     if r and ((not args.build) or args.build == "ALL" or args.build == r["name"]):
                         module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
@@ -746,7 +747,7 @@ def main():
                         if hasattr(module, "target_build"): runner.run_step(r, "target_build", module.target_build, arch=arch)
                         if hasattr(module, "target_install"): runner.run_step(r, "target_install", module.target_install, arch=arch)
 
-            print(f"[{arch}] Target Phase 3: Other Components")
+            colors.info(f"[{arch}] Target Phase 3: Other Components")
             other_repos = [r for r in target_configs_to_build if r["type"] == "other" and r["name"] != "linux-image"]
             if other_repos:
                 for r in other_repos:
@@ -767,18 +768,18 @@ def main():
                 skel_etc = skel_dir / "etc"
 
             if skel_etc.exists():
-                print(f"[{arch}] Finalizing: Replacing /etc with {skel_etc} before kernel build...")
+                colors.info(f"[{arch}] Finalizing: Replacing /etc with {skel_etc} before kernel build...")
                 shutil.rmtree(staging_dir / "etc", ignore_errors=True)
                 shutil.rmtree(target_dir / "etc", ignore_errors=True)
                 shutil.copytree(skel_etc, staging_dir / "etc", symlinks=True)
                 shutil.copytree(skel_etc, target_dir / "etc", symlinks=True)
             elif args.skel_etc_override or 'etc_dir' in global_cfg:
-                print(f"[{arch}] Error: Skel etc override path {skel_etc} does not exist.")
+                colors.error(f"[{arch}] Error: Skel etc override path {skel_etc} does not exist.")
                 sys.exit(1)
 
             linux_proj = next((r for r in target_configs_to_build if r["name"] == "linux-image"), None)
             if linux_proj:
-                print(f"[{arch}] Target Phase 4: Kernel Finalization")
+                colors.info(f"[{arch}] Target Phase 4: Kernel Finalization")
                 module = load_repo_una(linux_proj["repo_dir"], linux_proj.get("una_file", "una.py"))
                 
                 kconfig = args.kconfig
