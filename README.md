@@ -1,6 +1,6 @@
 # Una: Custom Musl-based Linux Build System
 
-Una is a build tool designed to create a custom, minimal Linux system based on the musl C library. It manages the entire lifecycle of the build process, from fetching source code and building host tools to compiling a cross-architecture kernel and running it in emulation.
+Una is a build tool designed to create a custom, minimal Linux system based on the musl C library. It manages the entire lifecycle of the build process, from fetching source code and building tools to compiling a cross-architecture kernel and running it in emulation.
 
 ## Key Features
 
@@ -50,7 +50,7 @@ python una.py --build nsd
 
 #### Build Phases
 Una executes builds in distinct phases to ensure dependencies are met:
-1.  **Host Stage**: Builds necessary tools (like LLVM/Clang) if required.
+1.  **Tools Stage**: Builds necessary tools (like LLVM/Clang) if required.
 2.  **Phase 0**: Installs System Headers (musl & linux).
 3.  **Phase 1**: Builds and installs the core C library (musl).
 4.  **Phase 2**: Builds Base Components (e.g., libmnl, libnftnl).
@@ -102,13 +102,13 @@ The top-level `una.py` sets environment variables like `CFLAGS`, `CXXFLAGS`, and
 - **Clean**: `python una.py --clean` (Global cleanup of build artifacts and environment; safe check for dirty repos).
 - **List Repos**: `python una.py --list [type]` (List managed repositories).
   - Use `all` to see everything.
-  - Use `host`, `base`, or `other` to filter by type.
+  - Use `tools`, `base`, or `other` to filter by type.
 
 ### Component Types
 
 When listing or configuring repositories, they are categorized into three main types:
 
-*   **host**: These are tools that run on your computer to help build the system (like compilers). They are built first.
+*   **tools**: These are tools that run on your computer to help build the system (like compilers). They are built first.
 *   **base**: These are the fundamental parts of the target system, like the C library (`musl`) and system headers. They form the foundation that everything else sits on.
 *   **other**: these are the "extra" parts of the system, like applications (BusyBox), security tools (OpenSSL), or the final kernel image itself.
 
@@ -120,7 +120,7 @@ Repositories are defined in configuration files (like `confs/default.conf`). You
 [busybox]                # The name of the component
 una_repo = busybox.git   # Where it lives on the server
 repo_dir = repo/busybox  # Where it will be stored on your computer
-type = other             # What kind of component it is (host/base/other)
+type = other             # What kind of component it is (tools/base/other)
 tag = 1_37_0             # (Optional) A specific version to use
 ```
 
