@@ -413,7 +413,7 @@ def main():
     git_base = get_git_remote_base()
     parser.add_argument(
         "--list",
-        choices=["host", "base", "other", "all"],
+        choices=["tools", "base", "other", "all"],
         help="List repos of the specified type.",
     )
     parser.add_argument(
@@ -434,9 +434,9 @@ def main():
         help="Target architecture(s), comma-separated (e.g., x32,x86_64,aarch64,riscv64). Default: x32",
     )
     parser.add_argument(
-        "--no-build-host",
+        "--no-tools",
         action="store_true",
-        help="Skip building host tools.",
+        help="Skip building tools.",
     )
     parser.add_argument(
         "--kconfig",
@@ -491,7 +491,7 @@ def main():
     args = parser.parse_args()
     
     arches = [a.strip() for a in args.arch.split(",")]
-    host_install_dir = bld_base / "host"
+    tools_install_dir = bld_base / "tools"
     test_disk = bld_base / "test.img"
 
     if args.create_disk:
@@ -611,14 +611,14 @@ def main():
     if args.build:
         colors.info("Starting build process.")
         all_possible_arches = ["x32", "x86_64", "aarch64", "riscv64"]
-        host_repos = [r for r in repos_to_process if r["type"] == "host"]
-        if host_repos and not args.no_build_host:
-            colors.info("\n--- Host Stage ---")
-            for r in host_repos:
+        tools_repos = [r for r in repos_to_process if r["type"] == "tools"]
+        if tools_repos and not args.no_tools:
+            colors.info("\n--- Tools Stage ---")
+            for r in tools_repos:
                 module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
-                if hasattr(module, "host_configure"): module.host_configure(host_install_dir, arches=all_possible_arches)
-                if hasattr(module, "host_build"): module.host_build(host_install_dir)
-                if hasattr(module, "host_install"): module.host_install(host_install_dir)
+                if hasattr(module, "tools_configure"): module.tools_configure(tools_install_dir, arches=all_possible_arches)
+                if hasattr(module, "tools_build"): module.tools_build(tools_install_dir)
+                if hasattr(module, "tools_install"): module.tools_install(tools_install_dir)
 
         target_configs_to_build = [r for r in repos_to_process if r["type"] in ["base", "other"]]
         for arch in arches:
@@ -645,14 +645,14 @@ def main():
             # Clean ALL target repos before build to avoid stale configs/artifacts between arches
             # This is critical for the kernel which relies on its .config in the source tree
             cleaned_dirs = set()
-            host_dirs = {Path(r["repo_dir"]).absolute() for r in repos if r["type"] == "host"}
+            tools_dirs = {Path(r["repo_dir"]).absolute() for r in repos if r["type"] == "tools"}
             all_target_repos = [r for r in repos if r["type"] in ["base", "other"]]
             
             for r in all_target_repos:
                 r_path = Path(r["repo_dir"]).absolute()
                 if r_path in cleaned_dirs: continue
-                if r_path in host_dirs:
-                    colors.info(f"[{arch}] Skipping git clean for {r['name']} (shared with host components)")
+                if r_path in tools_dirs:
+                    colors.info(f"[{arch}] Skipping git clean for {r['name']} (shared with tools components)")
                     continue
                 
                 colors.info(f"[{arch}] Cleaning {r['name']} ({r['repo_dir']})...")
@@ -685,7 +685,7 @@ def main():
             if not musl_cfg.exists() or not musl_cxx_cfg.exists() or not musl_static_cfg.exists():
                 colors.info(f"[{arch}] Generating compiler configurations...")
                 arch_bld_dir.mkdir(parents=True, exist_ok=True)
-                lld_path = host_install_dir / "bin" / "ld.lld"
+                lld_path = tools_install_dir / "bin" / "ld.lld"
                 lib_p = staging_dir / "usr" / "lib"
                 
                 # Common flags (excluding system includes to control order)
