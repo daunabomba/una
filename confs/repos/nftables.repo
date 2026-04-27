@@ -1,0 +1,6 @@
+[nftables]
+una_repo = nftables.git
+repo_dir = repo/nftables
+origin_url = /mnt/work/bld/nftables.git
+tag = v1.1.6
+type = other

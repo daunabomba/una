@@ -1,0 +1,6 @@
+[openssl]
+una_repo = openssl.git
+repo_dir = repo/openssl
+origin_url = /mnt/work/bld/openssl.git
+tag = openssl-4.0.0
+type = other

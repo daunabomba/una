@@ -1,0 +1,6 @@
+[busybox]
+una_repo = busybox.git
+repo_dir = repo/busybox
+origin_url = /mnt/work/bld/busybox.git
+tag = 1_37_0
+type = other

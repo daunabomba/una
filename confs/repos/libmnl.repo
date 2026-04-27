@@ -1,0 +1,6 @@
+[libmnl]
+una_repo = libmnl.git
+repo_dir = repo/libmnl
+origin_url = /mnt/work/bld/libmnl.git
+tag = libmnl-1.0.5
+type = base

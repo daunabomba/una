@@ -1,0 +1,8 @@
+[linux-headers]
+una_repo = linux.git
+repo_dir = repo/kernel
+una_file = una/headers.py
+origin_url = /mnt/work/bld/linux-stable.git
+type = base
+tag = v7.0.2
+sparse_ignore_dirs = Documentation, arch/arm/boot/dts, arch/arm64/boot/dts

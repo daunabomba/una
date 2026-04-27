@@ -287,6 +287,18 @@ def load_repo_config(config_path: Path):
     raw_configs = {}
     for section in cp.sections():
         raw_configs[section] = dict(cp[section])
+
+    if 'repos' in global_cfg:
+        repo_files = [r.strip() for r in global_cfg['repos'].replace('\\', ' ').split() if r.strip()]
+        for r_file in repo_files:
+            r_path = BASE_DIR / r_file
+            if r_path.exists():
+                rcp = configparser.ConfigParser()
+                rcp.read(r_path)
+                for section in rcp.sections():
+                    raw_configs[section] = dict(rcp[section])
+            else:
+                colors.warn(f"Warning: Repo config {r_path} not found.")
     
     final_repos = []
     for name in raw_configs:

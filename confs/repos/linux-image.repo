@@ -1,0 +1,9 @@
+[linux-image]
+ref = linux-headers
+una_file = una/kernel.py
+type = other
+kernel_name = kernel.<arch>
+kernel_image.x32 = arch/x86/boot/bzImage
+kernel_image.x86_64 = arch/x86/boot/bzImage
+kernel_image.aarch64 = arch/arm64/boot/Image.gz
+kernel_image.riscv64 = arch/riscv/boot/Image
