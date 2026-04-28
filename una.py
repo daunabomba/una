@@ -770,14 +770,23 @@ def main():
         all_tools_repos = [r for r in repos if r.get("type") == "tools"]
 
         tools_to_build = []
-        if explicit_tools_to_build:
-            tools_to_build = explicit_tools_to_build
-        elif not tools_state_file.exists() or not tools_marker.exists():
-            colors.info("Tools state missing or marker missing, will rebuild...")
+        if build_all:
+            colors.info("--build-all specified, rebuilding tools...")
             tools_to_build = all_tools_repos
-        elif check_tools_changed(all_tools_repos):
-            colors.info("Tools source changed, will rebuild...")
+        elif explicit_tools_to_build:
+            colors.info("Explicit tools in build list, rebuilding...")
             tools_to_build = all_tools_repos
+        else:
+            target_requires_tools = any(r.get("type") != "tools" for r in repos_to_process)
+            if target_requires_tools:
+                if not tools_state_file.exists() or not tools_marker.exists():
+                    colors.info("Tools not built, building...")
+                    tools_to_build = all_tools_repos
+                elif check_tools_changed(all_tools_repos):
+                    colors.info("Tools source changed, will rebuild...")
+                    tools_to_build = all_tools_repos
+                else:
+                    colors.info("Tools already built and up to date, skipping...")
 
         if tools_to_build:
             colors.info("\n--- Tools Stage ---")
