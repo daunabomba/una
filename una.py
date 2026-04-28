@@ -719,20 +719,56 @@ def main():
         all_possible_arches = ["x32", "x86_64", "aarch64", "riscv64"]
         
         tools_marker = tools_install_dir / ".tools_built"
-        needs_tools = not tools_marker.exists()
-        
+        tools_state_file = tools_install_dir / ".tools_state"
+
+        import subprocess
+
+        def get_repo_commit(repo_path):
+            if not (repo_path / ".git").exists():
+                return None
+            result = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=repo_path, capture_output=True, text=True
+            )
+            return result.stdout.strip() if result.returncode == 0 else None
+
+        def load_tools_state():
+            if not tools_state_file.exists():
+                return {}
+            try:
+                with open(tools_state_file, "r") as f:
+                    return json.load(f)
+            except Exception:
+                return {}
+
+        def save_tools_state(state):
+            tools_state_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(tools_state_file, "w") as f:
+                json.dump(state, f, indent=2)
+
+        def check_tools_changed(tools_repos):
+            current_state = {r["name"]: get_repo_commit(Path(r["repo_dir"])) for r in tools_repos}
+            saved_state = load_tools_state()
+
+            for name, commit in current_state.items():
+                if commit is None:
+                    continue
+                if name not in saved_state or saved_state[name] != commit:
+                    return True
+            return False
+
         explicit_tools_to_build = [r for r in repos_to_process if r.get("type") == "tools"]
-        
+        all_tools_repos = [r for r in repos if r.get("type") == "tools"]
+
         tools_to_build = []
-        if build_all and needs_tools:
-            tools_to_build = [r for r in repos if r.get("type") == "tools"]
-        elif explicit_tools_to_build:
+        if explicit_tools_to_build:
             tools_to_build = explicit_tools_to_build
-        elif needs_tools:
-            # A target requires tools, and marker is missing
-            target_configs_to_build = [r for r in repos_to_process if r.get("type") != "tools"]
-            if target_configs_to_build:
-                tools_to_build = [r for r in repos if r.get("type") == "tools"]
+        elif not tools_state_file.exists() or not tools_marker.exists():
+            colors.info("Tools state missing or marker missing, will rebuild...")
+            tools_to_build = all_tools_repos
+        elif check_tools_changed(all_tools_repos):
+            colors.info("Tools source changed, will rebuild...")
+            tools_to_build = all_tools_repos
 
         if tools_to_build:
             colors.info("\n--- Tools Stage ---")
@@ -741,6 +777,8 @@ def main():
                 if hasattr(module, "tools_configure"): module.tools_configure(tools_install_dir, arches=all_possible_arches)
                 if hasattr(module, "tools_build"): module.tools_build(tools_install_dir)
                 if hasattr(module, "tools_install"): module.tools_install(tools_install_dir)
+            new_state = {r["name"]: get_repo_commit(Path(r["repo_dir"])) for r in tools_to_build}
+            save_tools_state(new_state)
             tools_marker.parent.mkdir(parents=True, exist_ok=True)
             tools_marker.write_text("tools up-to-date\n")
 
