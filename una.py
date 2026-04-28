@@ -364,20 +364,6 @@ def load_repo_config(config_path: Path):
             
         final_repos.append(config)
     
-    if requested_repos:
-        filtered = []
-        for cfg in final_repos:
-            name = cfg['name']
-            if name in requested_repos:
-                filtered.append(cfg)
-                continue
-            ref_name = cfg.get('ref')
-            if ref_name and ref_name in requested_repos:
-                filtered.append(cfg)
-                continue
-        if filtered:
-            final_repos = filtered
-    
     for cfg in final_repos:
         if 'depends' in cfg:
             cfg['depends'] = [s.strip() for s in cfg['depends'].replace(',', ' ').split() if s.strip()]
@@ -664,7 +650,20 @@ def main():
     else:
         required_names = set(dep_graph.keys())
         pruned_graph = dep_graph
-
+    
+    missing_deps = required_names - {r["name"] for r in repos_config}
+    if missing_deps:
+        colors.info(f"Loading missing dependencies: {missing_deps}")
+        for dep_name in missing_deps:
+            repo_file = BASE_DIR / "confs" / "repos" / f"{dep_name}.repo"
+            if repo_file.exists():
+                rcp = configparser.ConfigParser()
+                rcp.read(repo_file)
+                for section in rcp.sections():
+                    repos_config.append(dict(rcp[section]))
+            else:
+                colors.warn(f"Warning: Repo config for {dep_name} not found.")
+    
     # Sync/Init for repos - only sync repos in the required dependency set
     for cfg in repos_config:
         # Skip cloning for virtual aliases
