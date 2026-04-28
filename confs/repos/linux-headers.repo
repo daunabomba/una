@@ -3,7 +3,6 @@ una_repo = linux.git
 repo_dir = repo/kernel
 una_file = una/headers.py
 origin_url = /mnt/work/bld/linux-stable.git
-depends = build-tools
 type = target
 tag = v7.0.2
 sparse_ignore_dirs = Documentation, arch/arm/boot/dts, arch/arm64/boot/dts
