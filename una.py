@@ -315,7 +315,6 @@ def load_repo_config(config_path: Path):
             colors.warn(f"Warning: Repo config {r_path} not found.")
     
     if requested_repos:
-        to_process = set()
         for name in list(raw_configs.keys()):
             if name in requested_repos:
                 continue
