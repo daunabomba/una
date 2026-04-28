@@ -17,7 +17,6 @@ from mods.utils import init_or_reset_repo, rebase_and_push, save_and_push, get_t
 from mods.snapshot import take_snapshot, compare_snapshots, write_report, get_report_paths
 from mods import colors
 
-bld_base = BASE_DIR / "bld"
 skel_dir = BASE_DIR / "skel"
 
 import importlib.util
