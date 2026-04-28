@@ -299,8 +299,6 @@ def load_repo_config(config_path: Path):
     repo_files = []
     if 'repos' in global_cfg:
         repo_files = [r.strip() for r in global_cfg['repos'].replace('\\', ' ').split() if r.strip()]
-    elif requested_repos:
-        repo_files = []
     else:
         repo_files = [str(p.relative_to(BASE_DIR)) for p in (BASE_DIR / "confs" / "repos").glob("*.repo")]
         
@@ -315,12 +313,16 @@ def load_repo_config(config_path: Path):
             colors.warn(f"Warning: Repo config {r_path} not found.")
     
     if requested_repos:
-        for name in list(raw_configs.keys()):
+        to_remove = set()
+        for name in raw_configs:
             if name in requested_repos:
                 continue
             cfg = raw_configs[name]
-            if 'ref' in cfg and cfg['ref'] in requested_repos:
-                continue
+            if 'ref' not in cfg:
+                to_remove.add(name)
+            elif cfg['ref'] not in requested_repos:
+                to_remove.add(name)
+        for name in to_remove:
             del raw_configs[name]
     
     final_repos = []
