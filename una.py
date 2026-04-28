@@ -337,36 +337,31 @@ def load_repo_config(config_path: Path):
             current_cfg = parent_base
             visited.add(ref_name)
         
-        cfg = current_cfg
-        cfg['name'] = name
+config = current_cfg
+        config['name'] = name
         
-        # Post-process types AFTER all merges are done for this repo
-            
-            
-        if 'sparse_ignore_dirs' in cfg:
-            cfg['sparse_ignore_dirs'] = [s.strip() for s in cfg['sparse_ignore_dirs'].split(',') if s.strip()]
+        if 'sparse_ignore_dirs' in config:
+            config['sparse_ignore_dirs'] = [s.strip() for s in config['sparse_ignore_dirs'].split(',') if s.strip()]
         else:
-            cfg['sparse_ignore_dirs'] = []
+            config['sparse_ignore_dirs'] = []
             
-        if 'repo_dir' in cfg:
-            # If relative, it's relative to BASE_DIR
-            rd = Path(cfg['repo_dir'])
+        if 'repo_dir' in config:
+            rd = Path(config['repo_dir'])
             if not rd.is_absolute():
-                cfg['repo_dir'] = BASE_DIR / rd
+                config['repo_dir'] = BASE_DIR / rd
             else:
-                cfg['repo_dir'] = rd
+                config['repo_dir'] = rd
         
-        # Handle kernel_image map
         kimg = {}
-        for key in list(cfg.keys()):
+        for key in list(config.keys()):
             if key.startswith('kernel_image.'):
                 arch = key.split('.', 1)[1]
-                kimg[arch] = cfg[key]
-                del cfg[key]
-if kimg:
-            cfg['kernel_image'] = kimg
+                kimg[arch] = config[key]
+                del config[key]
+        if kimg:
+            config['kernel_image'] = kimg
             
-        final_repos.append(cfg)
+        final_repos.append(config)
     
     if requested_repos:
         filtered = []
