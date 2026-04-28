@@ -2,5 +2,6 @@
 una_repo = wireguard-tools.git
 repo_dir = repo/wireguard-tools
 origin_url = /mnt/work/bld/wireguard-tools.git
+depends = musl
 tag = v1.0.20260223
 type = target
