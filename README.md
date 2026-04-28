@@ -43,7 +43,12 @@ python una.py --build
 python una.py --build --arch x86_64,aarch64
 ```
 
-**Build a single component (e.g., nsd):**
+**Build everything (tools and all components):**
+```bash
+python una.py --build-all
+```
+
+**Build specific component(s):**
 ```bash
 python una.py --build nsd
 ```
@@ -53,9 +58,8 @@ Una executes builds in distinct phases to ensure dependencies are met:
 1.  **Tools Stage**: Builds necessary tools (like LLVM/Clang) if required.
 2.  **Phase 0**: Installs System Headers (musl & linux).
 3.  **Phase 1**: Builds and installs the core C library (musl).
-4.  **Phase 2**: Builds Base Components (e.g., libmnl, libnftnl).
-5.  **Phase 3**: Builds Other Components (e.g., openssl, nsd, dropbear).
-6.  **Phase 4**: Kernel Finalization and Image Generation.
+4.  **Phase 2**: Builds Target Components (all other components).
+5.  **Phase 3**: Kernel Finalization and Image Generation.
 
 ### 3. Build Verification & Reporting
 
@@ -99,18 +103,20 @@ The top-level `una.py` sets environment variables like `CFLAGS`, `CXXFLAGS`, and
 - **Checkout Tag**: `python una.py --checkout "tag"` (Switch all repositories to a specific tag).
 - **Rebase**: `python una.py --rebase` (Fetch and rebase local branches onto upstream branches with squashing for a clean history).
 - **Change Report**: `python una.py --report` (Generate a summary of all local changes in the `bld/report/` directory).
-- **Clean**: `python una.py --clean` (Global cleanup of build artifacts and environment; safe check for dirty repos).
+- **Clean**: `python una.py --clean` (Global cleanup of build artifacts and environment; automatically removes any unreferenced repo directories).
 - **List Repos**: `python una.py --list [type]` (List managed repositories).
   - Use `all` to see everything.
-  - Use `tools`, `base`, or `other` to filter by type.
+  - Use `tools` or `target` to filter by type.
 
 ### Component Types
 
-When listing or configuring repositories, they are categorized into three main types:
+When listing or configuring repositories, they are categorized into two main types:
 
 *   **tools**: These are tools that run on your computer to help build the system (like compilers). They are built first.
-*   **base**: These are the fundamental parts of the target system, like the C library (`musl`) and system headers. They form the foundation that everything else sits on.
-*   **other**: these are the "extra" parts of the system, like applications (BusyBox), security tools (OpenSSL), or the final kernel image itself.
+*   **target**: These are parts of the target system, including the core library (`musl`), applications (BusyBox), security tools (OpenSSL), and the final kernel image.
+
+**Virtual Repositories**:
+You can create virtual repositories that act as aliases to other repositories. They must specify a `target` attribute. This is useful for decoupling dependencies (e.g., `build-tools` dereferencing to `llvm-tools`).
 
 ## How Repositories are Specified
 
@@ -120,7 +126,7 @@ Repositories are defined in configuration files (like `confs/default.conf`). You
 [busybox]                # The name of the component
 una_repo = busybox.git   # Where it lives on the server
 repo_dir = repo/busybox  # Where it will be stored on your computer
-type = other             # What kind of component it is (tools/base/other)
+type = target            # What kind of component it is (tools/target)
 tag = 1_37_0             # (Optional) A specific version to use
 ```
 

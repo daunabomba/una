@@ -547,6 +547,15 @@ def main():
             colors.warn(f"Repository '{s_cfg['name']}' found in repo/ but not in config. Removing...")
             remove_repo(s_cfg["name"], scanned, arches)
 
+    # Ensure any directory in repo/ not in our active config is removed completely
+    repo_base = BASE_DIR / "repo"
+    if repo_base.exists():
+        valid_repo_dirs = {Path(r["repo_dir"]).absolute() for r in repos_config if not r.get("is_virtual")}
+        for d in repo_base.iterdir():
+            if d.is_dir() and d.absolute() not in valid_repo_dirs:
+                colors.warn(f"Unreferenced directory '{d.name}' found in repo/. Removing...")
+                shutil.rmtree(d, ignore_errors=True)
+
     # Automatic Sync/Init for repos
     una_base = get_git_remote_base()
     
@@ -825,7 +834,7 @@ def main():
 
             linux_proj = next((r for r in target_configs_to_build if r["name"] == "linux-image"), None)
             if linux_proj and (build_all or linux_proj["name"] in args.build):
-                colors.info(f"[{arch}] Target Phase 4: Kernel Finalization")
+                colors.info(f"[{arch}] Target Phase 3: Kernel Finalization")
                 module = load_repo_una(linux_proj["repo_dir"], linux_proj.get("una_file", "una.py"))
                 
                 kconfig = args.kconfig
@@ -1104,6 +1113,15 @@ def main():
                 subprocess.run(["git", "clean", "-fdx"], cwd=r_path, check=True)
                 cleaned_dirs.add(r_path)
                 
+        # 2.5 Clean unreferenced repos in repo/
+        repo_base = BASE_DIR / "repo"
+        if repo_base.exists():
+            valid_repo_dirs = {Path(r["repo_dir"]).absolute() for r in repos if not r.get("is_virtual")}
+            for d in repo_base.iterdir():
+                if d.is_dir() and d.absolute() not in valid_repo_dirs:
+                    print(f"Removing unreferenced directory {d}...")
+                    shutil.rmtree(d, ignore_errors=True)
+                    
         # 3. Clean top-level workspace (excluding reports, kernel images, and repos)
         print("Cleaning top-level workspace...")
         if is_repo_dirty(BASE_DIR):
