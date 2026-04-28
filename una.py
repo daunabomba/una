@@ -541,6 +541,30 @@ def main():
             colors.warn(f"Repository '{s_cfg['name']}' found in repo/ but not in config. Removing...")
             remove_repo(s_cfg["name"], scanned, arches)
 
+    # Deduplicate repos_config by absolute repo_dir path (keeping first occurrence)
+    # BUT: Don't deduplicate repos that have 'ref' attribute (they reference parent configs)
+    # Use (repo_dir, una_file) as key to allow different phases of same repo (e.g., linux-headers vs linux-image)
+    seen_dirs = set()
+    deduped_repos_config = []
+    for r in repos_config:
+        if r.get("is_virtual"):
+            deduped_repos_config.append(r)
+        elif 'repo_dir' not in r:
+            # Skip repos without repo_dir (shouldn't happen after config loading)
+            deduped_repos_config.append(r)
+        else:
+            abs_dir = Path(r["repo_dir"]).absolute()
+            # Use (repo_dir, una_file) as key to distinguish different build phases
+            # This allows linux-headers and linux-image (both in repo/kernel) to coexist
+            dir_file_key = (abs_dir, r.get("una_file", "una.py"))
+            if dir_file_key not in seen_dirs:
+                deduped_repos_config.append(r)
+                seen_dirs.add(dir_file_key)
+    
+    if len(deduped_repos_config) < len(repos_config):
+        colors.info(f"Deduplicated {len(repos_config) - len(deduped_repos_config)} duplicate repo entries")
+    repos_config = deduped_repos_config
+
     # Ensure any directory in repo/ not in our active config is removed completely
     repo_base = BASE_DIR / "repo"
     if repo_base.exists():
@@ -553,43 +577,7 @@ def main():
     # Automatic Sync/Init for repos
     una_base = get_git_remote_base()
     
-    for cfg in repos_config:
-        # Skip cloning for virtual aliases
-        if cfg.get("is_virtual"):
-            continue
-            
-        repo_dir = Path(cfg["repo_dir"])
-            
-        # We ALWAYS want to ensure remotes are correctly configured (URLs, refspecs)
-        # but we only want to perform a destructive RESET if the repo is missing.
-        needs_reset = not repo_dir.exists()
-        
-        if needs_reset:
-            if not una_base:
-                colors.warn(f"Warning: New repository '{cfg['name']}' found in config but 'una' base URL is unknown. "
-                      "Please ensure the top-level repository has a remote named 'una' (e.g., git remote rename origin una). "
-                      "Skipping initialization.")
-                continue
-            colors.info(f"New repository '{cfg['name']}' detected. Initializing...")
-        
-        base = una_base or "UNKNOWN_BASE"
-        if not base.endswith("/") and not base.endswith(":"):
-            base += "/"
-        una_url = f"{base}{cfg['una_repo']}"
-        
-        has_origin = "origin_url" in cfg
-        init_or_reset_repo(
-            repo_dir=repo_dir, 
-            origin_url=cfg.get("origin_url"), 
-            una_url=una_url, 
-            sparse_ignore_dirs=cfg["sparse_ignore_dirs"],
-            with_origin=has_origin,
-            reset=needs_reset,
-            tag=cfg.get("tag")
-        )
-        if needs_reset:
-            save_repo_state(cfg)
-
+    # Build repos list (non-virtual only) for dependency analysis
     repos = []
     for r in repos_config:
         if r.get("is_virtual", True):
@@ -635,6 +623,48 @@ def main():
     else:
         required_names = set(dep_graph.keys())
         pruned_graph = dep_graph
+
+    # Sync/Init for repos - only sync repos in the required dependency set
+    for cfg in repos_config:
+        # Skip cloning for virtual aliases
+        if cfg.get("is_virtual"):
+            continue
+        
+        # Only sync repos that are needed for build or active operations
+        if cfg["name"] not in required_names:
+            continue
+            
+        repo_dir = Path(cfg["repo_dir"])
+            
+        # We ALWAYS want to ensure remotes are correctly configured (URLs, refspecs)
+        # but we only want to perform a destructive RESET if the repo is missing.
+        needs_reset = not repo_dir.exists()
+        
+        if needs_reset:
+            if not una_base:
+                colors.warn(f"Warning: New repository '{cfg['name']}' found in config but 'una' base URL is unknown. "
+                      "Please ensure the top-level repository has a remote named 'una' (e.g., git remote rename origin una). "
+                      "Skipping initialization.")
+                continue
+            colors.info(f"New repository '{cfg['name']}' detected. Initializing...")
+        
+        base = una_base or "UNKNOWN_BASE"
+        if not base.endswith("/") and not base.endswith(":"):
+            base += "/"
+        una_url = f"{base}{cfg['una_repo']}"
+        
+        has_origin = "origin_url" in cfg
+        init_or_reset_repo(
+            repo_dir=repo_dir, 
+            origin_url=cfg.get("origin_url"), 
+            una_url=una_url, 
+            sparse_ignore_dirs=cfg["sparse_ignore_dirs"],
+            with_origin=has_origin,
+            reset=needs_reset,
+            tag=cfg.get("tag")
+        )
+        if needs_reset:
+            save_repo_state(cfg)
 
     try:
         ts = graphlib.TopologicalSorter(pruned_graph)
