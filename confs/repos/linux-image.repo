@@ -1,6 +1,7 @@
 [linux-image]
 ref = linux-headers
 una_file = una/kernel.py
+depends = llvm-tools
 type = target
 kernel_name = kernel.<arch>
 kernel_image.x32 = arch/x86/boot/bzImage
