@@ -1,4 +1,4 @@
 [llvm-runtime]
 ref = llvm-tools
 una_file = una/runtime.py
-type = base
+type = target

@@ -152,7 +152,10 @@ def list_repos(repos, target_type=None):
     Helper function to filter and print repo directories by type.
     If target_type is None, prints all.
     """
-    filtered = [r for r in repos if target_type is None or r.get("type") == target_type]
+    if target_type == "target":
+        filtered = [r for r in repos if r.get("type") != "tools"]
+    else:
+        filtered = [r for r in repos if target_type is None or r.get("type") == target_type]
     for r in filtered:
         script_info = f" (Script: {r.get('una_file', 'una.py')})"
         print(f"[{r.get('type', 'unknown')}] {r['name']} -> {r['repo_dir']}{script_info}")
@@ -355,6 +358,24 @@ def load_repo_config(config_path: Path):
             cfg['kernel_image'] = kimg
             
         final_repos.append(cfg)
+
+    # Documented behavior: virtual repos dereference before build decisions are made
+    # so dependencies and tool requirements are resolved correctly.
+    for cfg in final_repos:
+        if cfg.get("type") == "virtual" or "target" in cfg:
+            target_name = cfg.get("target")
+            target_repo = next((r for r in final_repos if r["name"] == target_name or str(r.get("repo_dir")) == target_name), None)
+            if not target_repo:
+                valid_targets = [r["name"] for r in final_repos if r.get("type") != "virtual" and "target" not in r]
+                colors.error(f"Error: Virtual repo alias '{cfg['name']}' cannot be resolved. Target '{target_name}' not found. Available repos: {', '.join(valid_targets)}")
+                sys.exit(1)
+            
+            for k, v in target_repo.items():
+                if k not in ["name", "target", "is_virtual"]:
+                    if k not in cfg or (k == "type" and cfg[k] == "virtual"):
+                        cfg[k] = v
+            cfg["is_virtual"] = True
+
     return final_repos, global_cfg
 
 def scan_repos():
@@ -425,14 +446,18 @@ def main():
     git_base = get_git_remote_base()
     parser.add_argument(
         "--list",
-        choices=["tools", "base", "other", "all"],
+        choices=["tools", "target", "all"],
         help="List repos of the specified type.",
     )
     parser.add_argument(
         "--build",
-        nargs="?",
-        const="ALL",
-        help="Build all projects (if no argument) or a specific component by name.",
+        nargs="*",
+        help="Build specific component(s) by name. If no name is provided, equivalent to --build-all.",
+    )
+    parser.add_argument(
+        "--build-all",
+        action="store_true",
+        help="Build all tools and all repo components.",
     )
     parser.add_argument(
         "--rebase",
@@ -445,11 +470,7 @@ def main():
         default="x32",
         help="Target architecture(s), comma-separated (e.g., x32,x86_64,aarch64,riscv64). Default: x32",
     )
-    parser.add_argument(
-        "--no-tools",
-        action="store_true",
-        help="Skip building tools.",
-    )
+
     parser.add_argument(
         "--kconfig",
         help="Path to kernel configuration file. Defaults to confs/kernel.[arch].config",
@@ -532,6 +553,10 @@ def main():
     for cfg in repos_config:
         repo_dir = Path(cfg["repo_dir"])
         
+        # Skip cloning for virtual aliases
+        if cfg.get("is_virtual"):
+            continue
+            
         # We ALWAYS want to ensure remotes are correctly configured (URLs, refspecs)
         # but we only want to perform a destructive RESET if the repo is missing.
         needs_reset = not repo_dir.exists()
@@ -575,12 +600,14 @@ def main():
             config["una_url"] = "UNKNOWN_BASE" 
         repos.append(config)
 
+    build_all = args.build_all or (args.build is not None and len(args.build) == 0)
+
     # Filtered view for operation execution
-    if args.build and args.build != "ALL":
-        target_name = args.build
-        repos_to_process = [r for r in repos if r["name"] == target_name]
-        if not repos_to_process:
-            colors.error(f"Error: Component '{target_name}' not found.")
+    if args.build is not None and not build_all:
+        repos_to_process = [r for r in repos if r["name"] in args.build]
+        missing_targets = set(args.build) - {r["name"] for r in repos_to_process}
+        if missing_targets:
+            colors.error(f"Error: Component(s) not found: {', '.join(missing_targets)}")
             sys.exit(1)
     else:
         repos_to_process = repos
@@ -620,19 +647,37 @@ def main():
             processed_dirs.add(r_path)
 
 
-    if args.build:
+    if args.build is not None or build_all:
         colors.info("Starting build process.")
         all_possible_arches = ["x32", "x86_64", "aarch64", "riscv64"]
-        tools_repos = [r for r in repos_to_process if r["type"] == "tools"]
-        if tools_repos and not args.no_tools:
+        
+        tools_marker = tools_install_dir / ".tools_built"
+        needs_tools = not tools_marker.exists()
+        
+        explicit_tools_to_build = [r for r in repos_to_process if r.get("type") == "tools"]
+        
+        tools_to_build = []
+        if build_all and needs_tools:
+            tools_to_build = [r for r in repos if r.get("type") == "tools"]
+        elif explicit_tools_to_build:
+            tools_to_build = explicit_tools_to_build
+        elif needs_tools:
+            # A target requires tools, and marker is missing
+            target_configs_to_build = [r for r in repos_to_process if r.get("type") != "tools"]
+            if target_configs_to_build:
+                tools_to_build = [r for r in repos if r.get("type") == "tools"]
+
+        if tools_to_build:
             colors.info("\n--- Tools Stage ---")
-            for r in tools_repos:
+            for r in tools_to_build:
                 module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
                 if hasattr(module, "tools_configure"): module.tools_configure(tools_install_dir, arches=all_possible_arches)
                 if hasattr(module, "tools_build"): module.tools_build(tools_install_dir)
                 if hasattr(module, "tools_install"): module.tools_install(tools_install_dir)
+            tools_marker.parent.mkdir(parents=True, exist_ok=True)
+            tools_marker.write_text("tools up-to-date\n")
 
-        target_configs_to_build = [r for r in repos_to_process if r["type"] in ["base", "other"]]
+        target_configs_to_build = [r for r in repos_to_process if r.get("type") != "tools"]
         for arch in arches:
             colors.info(f"\n====== Target Stage: {arch} ======")
             arch_bld_dir = bld_base / arch
@@ -658,7 +703,7 @@ def main():
             # This is critical for the kernel which relies on its .config in the source tree
             cleaned_dirs = set()
             tools_dirs = {Path(r["repo_dir"]).absolute() for r in repos if r["type"] == "tools"}
-            all_target_repos = [r for r in repos if r["type"] in ["base", "other"]]
+            all_target_repos = [r for r in repos if r.get("type") != "tools"]
             
             for r in all_target_repos:
                 r_path = Path(r["repo_dir"]).absolute()
@@ -718,12 +763,12 @@ def main():
             os.environ["CFLAGS_STATIC"] = f"--config={musl_static_cfg} -pipe -D_FILE_OFFSET_BITS=64 {cpu_flags}"
             os.environ["CPPFLAGS"] = f"-D_FILE_OFFSET_BITS=64 {cpu_flags}"
 
-            all_target_repos = [r for r in repos if r["type"] in ["base", "other"]]
+            all_target_repos = [r for r in repos if r.get("type") != "tools"]
 
             colors.info(f"[{arch}] Target Phase 0: System Headers (musl & linux-headers)")
             for name in ["musl", "linux-headers"]:
                 proj = next((r for r in all_target_repos if r["name"] == name), None)
-                if proj and ((not args.build) or args.build == "ALL" or args.build == proj["name"]):
+                if proj and (build_all or proj["name"] in args.build):
                     module = load_repo_una(proj["repo_dir"], proj.get("una_file", "una.py"))
                     kwargs = {"arch": arch}
                     if proj["name"] == "linux-headers":
@@ -739,32 +784,21 @@ def main():
 
             colors.info(f"[{arch}] Target Phase 1: Core Base Library (musl)")
             musl_proj = next((r for r in all_target_repos if r["name"] == "musl"), None)
-            if musl_proj and ((not args.build) or args.build == "ALL" or args.build == musl_proj["name"]):
+            if musl_proj and (build_all or musl_proj["name"] in args.build):
                 module = load_repo_una(musl_proj["repo_dir"], musl_proj.get("una_file", "una.py"))
                 if hasattr(module, "target_build"): runner.run_step(musl_proj, "target_build", module.target_build, arch=arch)
                 if hasattr(module, "target_install"): runner.run_step(musl_proj, "target_install", module.target_install, arch=arch)
 
-            base_repos = [
+            target_repos = [
                    r for r in target_configs_to_build
-                   if r["type"] == "base" and r["name"] not in ("musl", "linux-headers")
+                   if r["name"] not in ("musl", "linux-headers", "linux-image")
             ]
-            if base_repos:
-                colors.info(f"[{arch}] Target Phase 2: Base Components")
-                for r in base_repos:
-                    if r and ((not args.build) or args.build == "ALL" or args.build == r["name"]):
+            if target_repos:
+                colors.info(f"[{arch}] Target Phase 2: Target Components")
+                for r in target_repos:
+                    if r and (build_all or r["name"] in args.build):
                         module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
                         print(f"[{arch}] [{module}]")
-                        if hasattr(module, "target_configure"): runner.run_step(r, "target_configure", module.target_configure, arch=arch)
-                        if hasattr(module, "target_headers_install"): runner.run_step(r, "target_headers_install", module.target_headers_install, arch=arch)
-                        if hasattr(module, "target_build"): runner.run_step(r, "target_build", module.target_build, arch=arch)
-                        if hasattr(module, "target_install"): runner.run_step(r, "target_install", module.target_install, arch=arch)
-
-            colors.info(f"[{arch}] Target Phase 3: Other Components")
-            other_repos = [r for r in target_configs_to_build if r["type"] == "other" and r["name"] != "linux-image"]
-            if other_repos:
-                for r in other_repos:
-                    if r and ((not args.build) or args.build == "ALL" or args.build == r["name"]):
-                        module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
                         if hasattr(module, "target_configure"): runner.run_step(r, "target_configure", module.target_configure, arch=arch)
                         if hasattr(module, "target_headers_install"): runner.run_step(r, "target_headers_install", module.target_headers_install, arch=arch)
                         if hasattr(module, "target_build"): runner.run_step(r, "target_build", module.target_build, arch=arch)
@@ -790,7 +824,7 @@ def main():
                 sys.exit(1)
 
             linux_proj = next((r for r in target_configs_to_build if r["name"] == "linux-image"), None)
-            if linux_proj:
+            if linux_proj and (build_all or linux_proj["name"] in args.build):
                 colors.info(f"[{arch}] Target Phase 4: Kernel Finalization")
                 module = load_repo_una(linux_proj["repo_dir"], linux_proj.get("una_file", "una.py"))
                 

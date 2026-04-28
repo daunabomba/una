@@ -3,4 +3,4 @@ una_repo = nsd.git
 repo_dir = repo/nsd
 origin_url = /mnt/work/bld/nsd.git
 tag = NSD_4_14_2_REL
-type = other
+type = target
