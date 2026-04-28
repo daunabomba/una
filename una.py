@@ -395,7 +395,7 @@ def scan_repos():
                     print(f"Warning: Failed to load state for {d}: {e}")
     return scanned
 
-def remove_repo(name, repos, arches):
+def remove_repo(name, repos, arches, bld_base):
     """Removes a repository from the list, cleans build outputs and deletes repo dir."""
     target = next((r for r in repos if r["name"] == name), None)
     if not target:
@@ -555,7 +555,7 @@ def main():
     for s_cfg in scanned:
         if s_cfg["name"] not in config_repo_names:
             colors.warn(f"Repository '{s_cfg['name']}' found in repo/ but not in config. Removing...")
-            remove_repo(s_cfg["name"], scanned, arches)
+            remove_repo(s_cfg["name"], scanned, arches, bld_base)
 
     # Clean unsynced repos (exist in filesystem but were never synced - no .una_config)
     repo_base = BASE_DIR / "repo"
@@ -564,7 +564,7 @@ def main():
             if d.is_dir() and not (d / ".una_config").exists():
                 if d.name in config_repo_names:
                     colors.warn(f"Repository '{d.name}' exists but was never synced. Removing...")
-                    remove_repo(d.name, repos_config, arches)
+                    remove_repo(d.name, repos_config, arches, bld_base)
 
     # Deduplicate repos_config by absolute repo_dir path (keeping first occurrence)
     # BUT: Don't deduplicate repos that have 'ref' attribute (they reference parent configs)
