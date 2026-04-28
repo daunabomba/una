@@ -1,4 +1,4 @@
-[nsd]
+[nsd_real]
 una_repo = nsd.git
 repo_dir = repo/nsd
 origin_url = /mnt/work/bld/nsd.git
