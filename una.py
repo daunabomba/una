@@ -290,9 +290,17 @@ def load_repo_config(config_path: Path):
     for section in cp.sections():
         raw_configs[section] = dict(cp[section])
 
+    component_list = []
+    if 'components' in global_cfg:
+        component_list = [c.strip() for c in global_cfg['components'].replace(',', ' ').split() if c.strip()]
+
+    requested_repos = set(component_list)
+    
     repo_files = []
     if 'repos' in global_cfg:
         repo_files = [r.strip() for r in global_cfg['repos'].replace('\\', ' ').split() if r.strip()]
+    elif requested_repos:
+        repo_files = []
     else:
         repo_files = [str(p.relative_to(BASE_DIR)) for p in (BASE_DIR / "confs" / "repos").glob("*.repo")]
         
