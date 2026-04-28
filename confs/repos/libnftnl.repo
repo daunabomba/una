@@ -2,5 +2,6 @@
 una_repo = libnftnl.git
 repo_dir = repo/libnftnl
 origin_url = /mnt/work/bld/libnftnl.git
+depends = musl
 tag = libnftnl-1.3.1
 type = target
