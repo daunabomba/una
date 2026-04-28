@@ -4,3 +4,5 @@ repo_dir = repo/musl
 origin_url = /mnt/work/bld/musl.git
 tag = v1.2.6
 type = target
+depends = linux-headers build-tools
+

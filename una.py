@@ -359,22 +359,12 @@ def load_repo_config(config_path: Path):
             
         final_repos.append(cfg)
 
-    # Documented behavior: virtual repos dereference before build decisions are made
-    # so dependencies and tool requirements are resolved correctly.
     for cfg in final_repos:
-        if cfg.get("type") == "virtual" or "target" in cfg:
-            target_name = cfg.get("target")
-            target_repo = next((r for r in final_repos if r["name"] == target_name or str(r.get("repo_dir")) == target_name), None)
-            if not target_repo:
-                valid_targets = [r["name"] for r in final_repos if r.get("type") != "virtual" and "target" not in r]
-                colors.error(f"Error: Virtual repo alias '{cfg['name']}' cannot be resolved. Target '{target_name}' not found. Available repos: {', '.join(valid_targets)}")
-                sys.exit(1)
-            
-            for k, v in target_repo.items():
-                if k not in ["name", "target", "is_virtual"]:
-                    if k not in cfg or (k == "type" and cfg[k] == "virtual"):
-                        cfg[k] = v
-            cfg["is_virtual"] = True
+        if 'depends' in cfg:
+            cfg['depends'] = [s.strip() for s in cfg['depends'].replace(',', ' ').split() if s.strip()]
+        else:
+            cfg['depends'] = []
+        cfg["is_virtual"] = cfg.get("type") == "virtual"
 
     return final_repos, global_cfg
 
@@ -560,11 +550,11 @@ def main():
     una_base = get_git_remote_base()
     
     for cfg in repos_config:
-        repo_dir = Path(cfg["repo_dir"])
-        
         # Skip cloning for virtual aliases
         if cfg.get("is_virtual"):
             continue
+            
+        repo_dir = Path(cfg["repo_dir"])
             
         # We ALWAYS want to ensure remotes are correctly configured (URLs, refspecs)
         # but we only want to perform a destructive RESET if the repo is missing.
@@ -609,21 +599,53 @@ def main():
             config["una_url"] = "UNKNOWN_BASE" 
         repos.append(config)
 
-    build_all = args.build_all or (args.build is not None and len(args.build) == 0)
+    build_all = args.build_all
 
-    # Filtered view for operation execution
+    if args.build is not None and len(args.build) == 0:
+        if 'components' in global_cfg:
+            args.build = [c.strip() for c in global_cfg['components'].replace(',', ' ').split() if c.strip()]
+        else:
+            build_all = True
+
+    import graphlib
+    dep_graph = {r["name"]: r.get("depends", []) for r in repos}
+
     if args.build is not None and not build_all:
-        repos_to_process = [r for r in repos if r["name"] in args.build]
-        missing_targets = set(args.build) - {r["name"] for r in repos_to_process}
+        required_names = set(args.build)
+        missing_targets = required_names - set(dep_graph.keys())
         if missing_targets:
             colors.error(f"Error: Component(s) not found: {', '.join(missing_targets)}")
             sys.exit(1)
+            
+        queue = list(required_names)
+        while queue:
+            curr = queue.pop(0)
+            for dep in dep_graph.get(curr, []):
+                if dep not in required_names:
+                    required_names.add(dep)
+                    queue.append(dep)
+                    
+        pruned_graph = {k: [d for d in v if d in required_names] for k, v in dep_graph.items() if k in required_names}
     else:
-        repos_to_process = repos
+        required_names = set(dep_graph.keys())
+        pruned_graph = dep_graph
+
+    try:
+        ts = graphlib.TopologicalSorter(pruned_graph)
+        build_order = list(ts.static_order())
+    except graphlib.CycleError as e:
+        colors.error(f"Error: Circular dependency detected: {e}")
+        sys.exit(1)
+
+    repos_to_process = []
+    for name in build_order:
+        repo = next((r for r in repos if r["name"] == name), None)
+        if repo:
+            repos_to_process.append(repo)
 
     # Check if repos exist before building or rebasing
-    if (args.build or args.rebase):
-        missing = [r["name"] for r in repos_to_process if not Path(r["repo_dir"]).exists()]
+    if (args.build is not None or args.rebase):
+        missing = [r["name"] for r in repos_to_process if not r.get("is_virtual") and not Path(r["repo_dir"]).exists()]
         if missing:
             colors.warn(f"Warning: The following repository directories are missing: {', '.join(missing)}")
             print("These should have been initialized automagically if a base URL was available.")
@@ -772,90 +794,55 @@ def main():
             os.environ["CFLAGS_STATIC"] = f"--config={musl_static_cfg} -pipe -D_FILE_OFFSET_BITS=64 {cpu_flags}"
             os.environ["CPPFLAGS"] = f"-D_FILE_OFFSET_BITS=64 {cpu_flags}"
 
-            all_target_repos = [r for r in repos if r.get("type") != "tools"]
+            colors.info(f"[{arch}] Building Target Components in Dependency Order")
+            for r in target_configs_to_build:
+                if r.get("is_virtual"):
+                    continue
 
-            colors.info(f"[{arch}] Target Phase 0: System Headers (musl & linux-headers)")
-            for name in ["musl", "linux-headers"]:
-                proj = next((r for r in all_target_repos if r["name"] == name), None)
-                if proj and (build_all or proj["name"] in args.build):
-                    module = load_repo_una(proj["repo_dir"], proj.get("una_file", "una.py"))
-                    kwargs = {"arch": arch}
-                    if proj["name"] == "linux-headers":
-                        kconfig = args.kconfig
-                        if not kconfig and 'kconfig' in global_cfg:
-                            kconfig = BASE_DIR / global_cfg['kconfig'].replace("<arch>", arch)
-                        if not kconfig:
-                            kconfig = BASE_DIR / "confs" / f"kernel.{arch}.config"
-                        kwargs["kconfig"] = Path(kconfig).absolute()
-
-                    if hasattr(module, "target_configure"): runner.run_step(proj, "target_configure", module.target_configure, **kwargs)
-                    if hasattr(module, "target_headers_install"): runner.run_step(proj, "target_headers_install", module.target_headers_install, **kwargs)
-
-            colors.info(f"[{arch}] Target Phase 1: Core Base Library (musl)")
-            musl_proj = next((r for r in all_target_repos if r["name"] == "musl"), None)
-            if musl_proj and (build_all or musl_proj["name"] in args.build):
-                module = load_repo_una(musl_proj["repo_dir"], musl_proj.get("una_file", "una.py"))
-                if hasattr(module, "target_build"): runner.run_step(musl_proj, "target_build", module.target_build, arch=arch)
-                if hasattr(module, "target_install"): runner.run_step(musl_proj, "target_install", module.target_install, arch=arch)
-
-            target_repos = [
-                   r for r in target_configs_to_build
-                   if r["name"] not in ("musl", "linux-headers", "linux-image")
-            ]
-            if target_repos:
-                colors.info(f"[{arch}] Target Phase 2: Target Components")
-                for r in target_repos:
-                    if r and (build_all or r["name"] in args.build):
-                        module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
-                        print(f"[{arch}] [{module}]")
-                        if hasattr(module, "target_configure"): runner.run_step(r, "target_configure", module.target_configure, arch=arch)
-                        if hasattr(module, "target_headers_install"): runner.run_step(r, "target_headers_install", module.target_headers_install, arch=arch)
-                        if hasattr(module, "target_build"): runner.run_step(r, "target_build", module.target_build, arch=arch)
-                        if hasattr(module, "target_install"): runner.run_step(r, "target_install", module.target_install, arch=arch)
-
-            # Ensure skel/etc overrides anything installed by components before kernel packing
-            skel_etc = None
-            if args.skel_etc_override:
-                skel_etc = Path(args.skel_etc_override)
-            elif 'etc_dir' in global_cfg:
-                skel_etc = BASE_DIR / global_cfg['etc_dir']
-            else:
-                skel_etc = skel_dir / "etc"
-
-            if skel_etc.exists():
-                colors.info(f"[{arch}] Finalizing: Replacing /etc with {skel_etc} before kernel build...")
-                shutil.rmtree(staging_dir / "etc", ignore_errors=True)
-                shutil.rmtree(target_dir / "etc", ignore_errors=True)
-                shutil.copytree(skel_etc, staging_dir / "etc", symlinks=True)
-                shutil.copytree(skel_etc, target_dir / "etc", symlinks=True)
-            elif args.skel_etc_override or 'etc_dir' in global_cfg:
-                colors.error(f"[{arch}] Error: Skel etc override path {skel_etc} does not exist.")
-                sys.exit(1)
-
-            linux_proj = next((r for r in target_configs_to_build if r["name"] == "linux-image"), None)
-            if linux_proj and (build_all or linux_proj["name"] in args.build):
-                colors.info(f"[{arch}] Target Phase 3: Kernel Finalization")
-                module = load_repo_una(linux_proj["repo_dir"], linux_proj.get("una_file", "una.py"))
+                colors.info(f"[{arch}] Processing component: {r['name']}")
                 
-                kconfig = args.kconfig
-                if not kconfig and 'kconfig' in global_cfg:
-                    kconfig = BASE_DIR / global_cfg['kconfig'].replace("<arch>", arch)
-                if not kconfig:
-                    kconfig = BASE_DIR / "confs" / f"kernel.{arch}.config"
-                kconfig_path = Path(kconfig).absolute()
-                
-                if hasattr(module, "target_configure"): runner.run_step(linux_proj, "target_configure", module.target_configure, arch=arch, kconfig=kconfig_path)
-                if hasattr(module, "target_build"): runner.run_step(linux_proj, "target_build", module.target_build, arch=arch, kconfig=kconfig_path)
-                if hasattr(module, "target_install"): runner.run_step(linux_proj, "target_install", module.target_install, arch=arch, kconfig=kconfig_path)
+                if r["name"] == "linux-image":
+                    skel_etc = None
+                    if args.skel_etc_override:
+                        skel_etc = Path(args.skel_etc_override)
+                    elif 'etc_dir' in global_cfg:
+                        skel_etc = BASE_DIR / global_cfg['etc_dir']
+                    else:
+                        skel_etc = skel_dir / "etc"
 
-                # Export kernel image
-                if "kernel_image" in linux_proj:
-                    image_map = linux_proj["kernel_image"]
+                    if skel_etc.exists():
+                        colors.info(f"[{arch}] Finalizing: Replacing /etc with {skel_etc} before kernel build...")
+                        shutil.rmtree(staging_dir / "etc", ignore_errors=True)
+                        shutil.rmtree(target_dir / "etc", ignore_errors=True)
+                        shutil.copytree(skel_etc, staging_dir / "etc", symlinks=True)
+                        shutil.copytree(skel_etc, target_dir / "etc", symlinks=True)
+                    elif args.skel_etc_override or 'etc_dir' in global_cfg:
+                        colors.error(f"[{arch}] Error: Skel etc override path {skel_etc} does not exist.")
+                        sys.exit(1)
+
+                module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
+                kwargs = {"arch": arch}
+                
+                if r["name"] in ["linux-headers", "linux-image"]:
+                    kconfig = args.kconfig
+                    if not kconfig and 'kconfig' in global_cfg:
+                        kconfig = BASE_DIR / global_cfg['kconfig'].replace("<arch>", arch)
+                    if not kconfig:
+                        kconfig = BASE_DIR / "confs" / f"kernel.{arch}.config"
+                    kwargs["kconfig"] = Path(kconfig).absolute()
+
+                if hasattr(module, "target_configure"): runner.run_step(r, "target_configure", module.target_configure, **kwargs)
+                if hasattr(module, "target_headers_install"): runner.run_step(r, "target_headers_install", module.target_headers_install, **kwargs)
+                if hasattr(module, "target_build"): runner.run_step(r, "target_build", module.target_build, **kwargs)
+                if hasattr(module, "target_install"): runner.run_step(r, "target_install", module.target_install, **kwargs)
+                
+                if r["name"] == "linux-image" and "kernel_image" in r:
+                    image_map = r["kernel_image"]
                     if arch in image_map:
                         rel_path = image_map[arch]
-                        src_img = Path(linux_proj["repo_dir"]) / rel_path
+                        src_img = Path(r["repo_dir"]) / rel_path
                         
-                        kernel_name = linux_proj.get("kernel_name", "kernel.<arch>")
+                        kernel_name = r.get("kernel_name", "kernel.<arch>")
                         dest_img = bld_base / kernel_name.replace("<arch>", arch)
                         
                         if src_img.exists():
@@ -865,12 +852,14 @@ def main():
                             print(f"[{arch}] Warning: Kernel image not found at {src_img}")
                         
                         # Sync back updated config to source
-                        src_config = Path(linux_proj["repo_dir"]) / ".config"
+                        src_config = Path(r["repo_dir"]) / ".config"
                         if src_config.exists():
+                            kconfig_path = kwargs.get("kconfig")
                             print(f"[{arch}] Syncing back sanitized updated kernel config to {kconfig_path}")
                             sync_kernel_config(src_config, kconfig_path)
                     else:
                         print(f"[{arch}] Warning: No kernel image path defined for this architecture")
+
 
         # Post-build cleanup for workspace repositories
         print("\n--- Post-build Workspace Cleanup ---")
