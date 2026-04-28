@@ -459,16 +459,7 @@ def main():
         const="ALL",
         help="Rebase the local branch onto the upstream branch (with squash) and push to una. Optional: specify a single repo name.",
     )
-    parser.add_argument(
-        "--arch",
-        default="x32",
-        help="Target architecture(s), comma-separated (e.g., x32,x86_64,aarch64,riscv64). Default: x32",
-    )
 
-    parser.add_argument(
-        "--kconfig",
-        help="Path to kernel configuration file. Defaults to confs/kernel.[arch].config",
-    )
     parser.add_argument(
         "--run",
         action="store_true",
@@ -500,14 +491,8 @@ def main():
         help="Remove all files produced by the build and clean the workspace repositories.",
     )
     parser.add_argument(
-        "--skel-etc-override",
-        metavar="PATH",
-        help="Override the default skel/etc directory with the content of PATH in the final system image.",
-    )
-    parser.add_argument(
         "--conf",
-        default="confs/default.conf",
-        help="Path to the repository configuration file. Default: confs/default.conf",
+        help="Path to the repository configuration file(s), comma-separated.",
     )
     parser.add_argument(
         "--report",
@@ -517,7 +502,16 @@ def main():
 
     args = parser.parse_args()
     
-    arches = [a.strip() for a in args.arch.split(",")]
+    if not args.conf:
+        colors.error("Error: --conf is required.")
+        sys.exit(1)
+    
+    conf_files = [c.strip() for c in args.conf.split(",") if c.strip()]
+    
+    if args.run and len(conf_files) > 1:
+        colors.error("Error: --run requires exactly one configuration file.")
+        sys.exit(1)
+    
     tools_install_dir = bld_base / "tools"
     test_disk = bld_base / "test.img"
 
@@ -528,9 +522,31 @@ def main():
         parser.print_help()
         sys.exit(0)
 
-    # Configuration for components and repositories
-    conf_path = BASE_DIR / args.conf
-    repos_config, global_cfg = load_repo_config(conf_path)
+    repos_config = []
+    global_cfg = {}
+    
+    for conf_file in conf_files:
+        conf_path = BASE_DIR / conf_file
+        if not conf_path.exists():
+            colors.error(f"Error: Config file {conf_path} not found.")
+            sys.exit(1)
+        
+        rc, gc = load_repo_config(conf_path)
+        
+        repos_config.extend(rc)
+        
+        if not global_cfg:
+            global_cfg = gc
+        else:
+            for k, v in gc.items():
+                if k not in global_cfg:
+                    global_cfg[k] = v
+    
+    arches = []
+    if 'arch' in global_cfg:
+        arches = [a.strip() for a in global_cfg['arch'].split(",") if a.strip()]
+    if not arches:
+        arches = ["x32"]
     
     # Identify repositories to remove (those in filesystem but not in config)
     scanned = scan_repos()
@@ -898,9 +914,7 @@ def main():
                 
                 if r["name"] == "linux-image":
                     skel_etc = None
-                    if args.skel_etc_override:
-                        skel_etc = Path(args.skel_etc_override)
-                    elif 'etc_dir' in global_cfg:
+                    if 'etc_dir' in global_cfg:
                         skel_etc = BASE_DIR / global_cfg['etc_dir']
                     else:
                         skel_etc = skel_dir / "etc"
@@ -911,7 +925,7 @@ def main():
                         shutil.rmtree(target_dir / "etc", ignore_errors=True)
                         shutil.copytree(skel_etc, staging_dir / "etc", symlinks=True)
                         shutil.copytree(skel_etc, target_dir / "etc", symlinks=True)
-                    elif args.skel_etc_override or 'etc_dir' in global_cfg:
+                    elif 'etc_dir' in global_cfg:
                         colors.error(f"[{arch}] Error: Skel etc override path {skel_etc} does not exist.")
                         sys.exit(1)
 
@@ -919,8 +933,8 @@ def main():
                 kwargs = {"arch": arch}
                 
                 if r["name"] in ["linux-headers", "linux-image"]:
-                    kconfig = args.kconfig
-                    if not kconfig and 'kconfig' in global_cfg:
+                    kconfig = None
+                    if 'kconfig' in global_cfg:
                         kconfig = BASE_DIR / global_cfg['kconfig'].replace("<arch>", arch)
                     if not kconfig:
                         kconfig = BASE_DIR / "confs" / f"kernel.{arch}.config"
@@ -937,8 +951,8 @@ def main():
                         rel_path = image_map[arch]
                         src_img = Path(r["repo_dir"]) / rel_path
                         
-                        kernel_name = r.get("kernel_name", "kernel.<arch>")
-                        dest_img = bld_base / kernel_name.replace("<arch>", arch)
+                        kernel_name = global_cfg.get("kernel_name", "kernel")
+                        dest_img = bld_base / kernel_name
                         
                         if src_img.exists():
                             print(f"[{arch}] Copying kernel image to {dest_img}")
@@ -990,8 +1004,8 @@ def main():
         arch = arches[0]
         print(f"\n--- Run Stage: {target_name} ({arch}) ---")
         
-        kernel_name = proj.get("kernel_name", "kernel.<arch>")
-        kernel_img = bld_base / kernel_name.replace("<arch>", arch)
+        kernel_name = global_cfg.get("kernel_name", "kernel")
+        kernel_img = bld_base / kernel_name
         if not kernel_img.exists():
             print(f"Error: Kernel image not found at {kernel_img}. Please build it first with --build {target_name}.")
             sys.exit(1)
