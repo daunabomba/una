@@ -2,5 +2,6 @@
 una_repo = dropbear.git
 repo_dir = repo/dropbear
 origin_url = /mnt/work/bld/dropbear.git
-tag = DROPBEAR_2025.89
 type = target
+depends = musl
+tag = DROPBEAR_2025.89
