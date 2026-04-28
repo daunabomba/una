@@ -826,7 +826,10 @@ def main():
                     colors.info(f"[{arch}] Skipping git clean for {r['name']} (shared with tools components)")
                     continue
                 
-                colors.info(f"[{arch}] Cleaning {r['name']} ({r['repo_dir']})...")
+                if not r_path.exists():
+                    continue
+                
+                colors.info(f"[{arch}] Cleaning {r['name']} ({r_path})...")
                 import subprocess
                 if is_repo_dirty(r_path):
                     colors.error(f"[{arch}] ERROR: Repository {r['name']} is dirty. Please commit or stash changes before building.")
