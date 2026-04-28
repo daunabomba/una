@@ -562,7 +562,7 @@ def main():
     if repo_base.exists():
         for d in repo_base.iterdir():
             if d.is_dir() and not (d / ".una_config").exists():
-                if d.name in config_repo_names:
+                if d.name not in config_repo_names:
                     colors.warn(f"Repository '{d.name}' exists but was never synced. Removing...")
                     remove_repo(d.name, repos_config, arches, bld_base)
 
