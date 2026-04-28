@@ -44,10 +44,11 @@ def load_repo_una(repo_dir: str, una_file_name: str = "una.py"):
 
 
 class StepRunner:
-    def __init__(self, arch, staging_dir, target_dir):
+    def __init__(self, arch, staging_dir, target_dir, bld_base):
         self.arch = arch
         self.staging_dir = staging_dir
         self.target_dir = target_dir
+        self.bld_base = bld_base
         self.component_snapshots = {} # name -> {staging: {}, target: {}}
         self.cleaned_components = set()
 
@@ -57,7 +58,7 @@ class StepRunner:
         
         # 1. Cleanup and Pre-snapshot on first call for this component
         if name not in self.cleaned_components:
-            report_file = bld_base / self.arch / "report" / f"{name}.txt"
+            report_file = self.bld_base / self.arch / "report" / f"{name}.txt"
             if report_file.exists():
                 colors.info(f"[{self.arch}] Cleaning up previous build outputs for {name}...")
                 paths = get_report_paths(report_file)
@@ -102,7 +103,7 @@ class StepRunner:
         combined_del = {f"staging/{k}": v for k, v in del_s.items()}
         combined_del.update({f"target/{k}": v for k, v in del_t.items()})
         
-        report_file = bld_base / self.arch / "report" / f"{name}.txt"
+        report_file = self.bld_base / self.arch / "report" / f"{name}.txt"
         write_report(combined_added, combined_mod, combined_del, report_file)
 
 
@@ -337,7 +338,7 @@ def load_repo_config(config_path: Path):
             current_cfg = parent_base
             visited.add(ref_name)
         
-config = current_cfg
+        config = current_cfg
         config['name'] = name
         
         if 'sparse_ignore_dirs' in config:
@@ -837,14 +838,14 @@ def main():
             arch_bld_dir = bld_base / arch
             staging_dir = arch_bld_dir / "staging"
             target_dir = arch_bld_dir / "target"
-            runner = StepRunner(arch, staging_dir, target_dir)
+            runner = StepRunner(arch, staging_dir, target_dir, bld_base)
 
             # Ensure build directories exist and skel is propagated
             staging_dir.mkdir(parents=True, exist_ok=True)
             target_dir.mkdir(parents=True, exist_ok=True)
             if skel_dir.exists():
                 colors.info(f"[{arch}] Phase -1: Skeleton Propagation (verified)")
-                skel_runner = StepRunner(arch, staging_dir, target_dir)
+                skel_runner = StepRunner(arch, staging_dir, target_dir, bld_base)
                 skel_runner.run_step(
                     cfg={"name": "skel"}, 
                     step_name="propagate", 
