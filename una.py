@@ -592,6 +592,8 @@ def main():
 
     repos = []
     for r in repos_config:
+        if r.get("is_virtual", True):
+            continue
         config = r.copy()
         # Merge behavior driven by config if merge is enabled
         if una_base:
