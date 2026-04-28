@@ -541,6 +541,15 @@ def main():
             colors.warn(f"Repository '{s_cfg['name']}' found in repo/ but not in config. Removing...")
             remove_repo(s_cfg["name"], scanned, arches)
 
+    # Clean unsynced repos (exist in filesystem but were never synced - no .una_config)
+    repo_base = BASE_DIR / "repo"
+    if repo_base.exists():
+        for d in repo_base.iterdir():
+            if d.is_dir() and not (d / ".una_config").exists():
+                if d.name in config_repo_names:
+                    colors.warn(f"Repository '{d.name}' exists but was never synced. Removing...")
+                    remove_repo(d.name, repos_config, arches)
+
     # Deduplicate repos_config by absolute repo_dir path (keeping first occurrence)
     # BUT: Don't deduplicate repos that have 'ref' attribute (they reference parent configs)
     # Use (repo_dir, una_file) as key to allow different phases of same repo (e.g., linux-headers vs linux-image)
