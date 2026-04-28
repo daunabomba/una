@@ -572,7 +572,7 @@ def main():
     for s_cfg in scanned:
         if s_cfg["name"] not in config_repo_names:
             colors.warn(f"Repository '{s_cfg['name']}' found in repo/ but not in config. Removing...")
-            remove_repo(s_cfg["name"], scanned, arches, bld_base)
+            remove_repo(s_cfg["name"], repos_config, arches, bld_base)
 
     # Clean unsynced repos (exist in filesystem but were never synced - no .una_config)
     repo_base = BASE_DIR / "repo"
