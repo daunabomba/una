@@ -363,11 +363,25 @@ def load_repo_config(config_path: Path):
                 arch = key.split('.', 1)[1]
                 kimg[arch] = cfg[key]
                 del cfg[key]
-        if kimg:
+if kimg:
             cfg['kernel_image'] = kimg
             
         final_repos.append(cfg)
-
+    
+    if requested_repos:
+        filtered = []
+        for cfg in final_repos:
+            name = cfg['name']
+            if name in requested_repos:
+                filtered.append(cfg)
+                continue
+            ref_name = cfg.get('ref')
+            if ref_name and ref_name in requested_repos:
+                filtered.append(cfg)
+                continue
+        if filtered:
+            final_repos = filtered
+    
     for cfg in final_repos:
         if 'depends' in cfg:
             cfg['depends'] = [s.strip() for s in cfg['depends'].replace(',', ' ').split() if s.strip()]
