@@ -314,6 +314,16 @@ def load_repo_config(config_path: Path):
         else:
             colors.warn(f"Warning: Repo config {r_path} not found.")
     
+    if requested_repos:
+        to_process = set()
+        for name in list(raw_configs.keys()):
+            if name in requested_repos:
+                continue
+            cfg = raw_configs[name]
+            if 'ref' in cfg and cfg['ref'] in requested_repos:
+                continue
+            del raw_configs[name]
+    
     final_repos = []
     for name in raw_configs:
         # Resolve references to get a flat dict of strings first
