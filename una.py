@@ -512,6 +512,7 @@ def main():
         colors.error("Error: --run requires exactly one configuration file.")
         sys.exit(1)
     
+    bld_base = BASE_DIR / conf_files[0].replace(".conf", "")
     tools_install_dir = bld_base / "tools"
     test_disk = bld_base / "test.img"
 
