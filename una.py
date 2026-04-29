@@ -758,8 +758,8 @@ def main():
         colors.info("Starting build process.")
         all_possible_arches = ["x32", "x86_64", "aarch64", "riscv64"]
         
-        tools_marker = tools_install_dir / ".tools_built"
-        tools_state_file = tools_install_dir / ".tools_state"
+        tools_marker = tools_install_dir / "tools_built"
+        tools_state_file = tools_install_dir / "tools_state"
 
         import subprocess
 
