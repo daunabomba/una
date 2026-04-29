@@ -680,14 +680,10 @@ def main():
     
     all_repos_names = {r["name"] for r in repos}
     missing = required_names - all_repos_names
-    if missing:
+    while missing:
         colors.info(f"Loading missing dependencies: {missing}")
-        loaded_names = set()
-        while missing:
-            name = missing.pop()
-            if name in loaded_names:
-                continue
-            loaded_names.add(name)
+        next_missing = set()
+        for name in missing:
             repo_file = BASE_DIR / "confs" / "repos" / f"{name}.repo"
             if repo_file.exists():
                 rcp = configparser.ConfigParser()
@@ -706,18 +702,19 @@ def main():
                     for dep in cfg.get("depends", "").replace(",", " ").split():
                         dep = dep.strip()
                         if dep and dep not in all_repos_names:
-                            missing.add(dep)
-                            required_names.add(dep)
-        # Re-expand dependencies after loading
-        dep_graph = {r["name"]: r.get("depends", []) for r in repos}
-        for name in list(required_names):
-            for dep in dep_graph.get(name, []):
-                if dep not in required_names:
-                    required_names.add(dep)
+                            next_missing.add(dep)
             else:
                 colors.warn(f"Warning: Repo config for {name} not found.")
-        dep_graph = {r["name"]: r.get("depends", []) for r in repos}
-        pruned_graph = {k: [d for d in v if d in required_names] for k, v in dep_graph.items() if k in required_names}
+        all_repos_names = {r["name"] for r in repos}
+        missing = next_missing - all_repos_names
+    
+    dep_graph = {r["name"]: r.get("depends", []) for r in repos}
+    for name in list(required_names):
+        for dep in dep_graph.get(name, []):
+            if dep not in required_names:
+                required_names.add(dep)
+    
+    pruned_graph = {k: [d for d in v if d in required_names] for k, v in dep_graph.items() if k in required_names}
     
     # Sync/Init for repos - only sync repos in the required dependency set
     for cfg in repos_config:
