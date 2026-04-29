@@ -471,12 +471,7 @@ def main():
     parser.add_argument(
         "--build",
         nargs="*",
-        help="Build specific component(s) by name. If no name is provided, equivalent to --build-all.",
-    )
-    parser.add_argument(
-        "--build-all",
-        action="store_true",
-        help="Build all tools and all repo components.",
+        help="Build specific component(s) by name. If no name is provided, build all components.",
     )
     parser.add_argument(
         "--rebase",
@@ -620,7 +615,7 @@ def main():
             config["una_url"] = "UNKNOWN_BASE" 
         repos.append(config)
 
-    build_all = args.build_all
+    build_all = False
 
     if args.build is not None and len(args.build) == 0:
         if 'components' in global_cfg:
@@ -630,12 +625,6 @@ def main():
 
     import graphlib
     dep_graph = {r["name"]: r.get("depends", []) for r in repos}
-
-    if args.build is not None and len(args.build) == 0:
-        if 'components' in global_cfg:
-            args.build = [c.strip() for c in global_cfg['components'].replace(',', ' ').split() if c.strip()]
-        else:
-            build_all = True
 
     if args.build is not None and not build_all:
         required_names = set(args.build)

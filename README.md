@@ -22,6 +22,18 @@ Una is a build tool designed to create a custom, minimal Linux system based on t
 - `confs/`: Default kernel and component configurations.
 - `mods/`: Shared Python utilities (snapshotting, git helpers, etc.).
 
+## Configuration & Filesystem Details
+
+### `confs/` Directory
+Stores all build system configuration files:
+- **Repository definitions**: `default.conf` and files in `confs/repos/` define managed components, their URLs, tags, and dependencies.
+- **Kernel configurations**: Architecture-specific kernel and C library configs (e.g., `musl.cfg`) used for cross-compilation.
+- **Architecture support**: Configs reference supported target architectures: `x32` (default), `x86_64`, `aarch64`, and `riscv64`.
+- **Component settings**: Per-component build overrides and custom configuration.
+
+### `skel/` Directory
+Root filesystem skeleton containing pre-configured files and directories (e.g., `/etc`, `/usr/local`) that are copied to the target system's root filesystem during image creation.
+
 ## Getting Started
 
 ### 1. Initialization
@@ -33,19 +45,9 @@ If your top-level repository has a remote named `una`, Una will automatically us
 
 You can build the entire system or specific components for one or more architectures.
 
-**Build everything for x32 (default):**
+**Build everything (tools and all components) for x32 (default):**
 ```bash
 python una.py --build
-```
-
-**Build for specific architectures:**
-```bash
-python una.py --build --arch x86_64,aarch64
-```
-
-**Build everything (tools and all components):**
-```bash
-python una.py --build-all
 ```
 
 **Build specific component(s):**
@@ -78,7 +80,7 @@ Una makes it easy to test your built kernel using QEMU.
 
 **Run the default kernel (must be built first):**
 ```bash
-python una.py --run --arch x32
+python una.py --run
 ```
 
 ### 5. Test Disk Management
