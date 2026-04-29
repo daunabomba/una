@@ -117,7 +117,7 @@ class CursesUI:
         
         # Wait for build to complete or user presses 'q'
         try:
-            while not self.build_thread or self.build_thread.isAlive():
+            while not self.build_thread or self.build_thread.is_alive():
                 ch = stdscr.getch()
                 if ch == ord('q'):
                     break
