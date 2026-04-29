@@ -912,27 +912,41 @@ def main():
         if not args.no_curses:
             try:
                 from mods.curses_ui import CursesUI
+                from build import init_build, run_build
+                # Initialize build module
+                init_build(
+                    colors, load_repo_una, StepRunner,
+                    get_target_triple, get_arch_flags,
+                    propagate_skel, sync_kernel_config,
+                    is_repo_dirty, BASE_DIR, bld_base,
+                    arches, repos, repos_to_process,
+                    required_names, build_all, tools_install_dir,
+                    skel_dir, global_cfg
+                )
                 # Determine log_dir from conf name
                 conf_name = Path(conf_files[0]).stem
                 log_dir = str(BASE_DIR / "bld" / conf_name / "x32" / "build_logs")
                 ui = CursesUI(log_dir=log_dir)
                 # Pass the build function to run in background
-                ui.start(_run_build, args)
+                ui.start(run_build, args)
                 return
             except ImportError:
                 colors.error("Error: curses not available")
                 sys.exit(1)
             
-        _run_build(args)
+        # Run build directly (no curses)
+        from build import init_build, run_build
+        init_build(
+            colors, load_repo_una, StepRunner,
+            get_target_triple, get_arch_flags,
+            propagate_skel, sync_kernel_config,
+            is_repo_dirty, BASE_DIR, bld_base,
+            arches, repos, repos_to_process,
+            required_names, build_all, tools_install_dir,
+            skel_dir, global_cfg
+        )
+        run_build(args)
         return
-    
-    def _run_build(args):
-        """Build function that can be run in a thread with curses."""
-        colors.info("Starting build process.")
-        all_possible_arches = ["x32", "x86_64", "aarch64", "riscv64"]
-        tools_state_file = BASE_DIR / "bld" / "tools" / "tools_state"
-
-    import subprocess
 
     def get_repo_commit(repo_path):
         if not (repo_path / ".git").exists():
