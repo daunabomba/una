@@ -26,10 +26,46 @@ Una is a build tool designed to create a custom, minimal Linux system based on t
 
 ### `confs/` Directory
 Stores all build system configuration files:
-- **Repository definitions**: `default.conf` and files in `confs/repos/` define managed components, their URLs, tags, and dependencies.
+- **Repository definitions**: Files in `confs/repos/` (e.g., `busybox.repo`) define managed components, their URLs, tags, and dependencies.
 - **Kernel configurations**: Architecture-specific kernel and C library configs (e.g., `musl.cfg`) used for cross-compilation.
 - **Architecture support**: Configs reference supported target architectures: `x32` (default), `x86_64`, `aarch64`, and `riscv64`.
 - **Component settings**: Per-component build overrides and custom configuration.
+
+#### Example: `confs/shell_x32.conf`
+```ini
+[una]
+components = build-tools linux-image busybox
+kernel_name = shell_x32.efi
+etc_dir = confs/etcs/shell
+kconfig = confs/kerns/kernel.x32.config
+cpu_flags = -O3 -march=x86-64-v4 -pipe
+```
+
+**Configuration items:**
+- `components`: Space-separated list of components to build (must match repo names in `confs/repos/`)
+- `kernel_name`: Output filename for the built kernel image (e.g., `.efi` file)
+- `etc_dir`: Path to directory containing `/etc` configuration files to embed in the target system
+- `kconfig`: Path to the kernel configuration file or directory (for architecture-specific configs)
+- `cpu_flags`: Compiler optimization flags passed to the target build (e.g., `-march`, `-O3`)
+
+#### Example: `confs/repos/busybox.repo`
+```ini
+[busybox]
+una_repo = busybox.git
+repo_dir = repo/busybox
+origin_url = https://git.busybox.net/busybox
+depends = musl
+tag = 1_37_0
+type = target
+```
+
+**Repository items:**
+- `una_repo`: Git repository name on the Una server
+- `repo_dir`: Local directory path where the repo will be cloned
+- `origin_url`: Upstream source URL for fetching original code
+- `depends`: Space-separated list of component dependencies (e.g., `musl`)
+- `tag`: Specific version tag to checkout (optional)
+- `type`: Component type — `tools` (build tools like LLVM) or `target` (system components)
 
 ### `skel/` Directory
 Root filesystem skeleton containing pre-configured files and directories (e.g., `/etc`, `/usr/local`) that are copied to the target system's root filesystem during image creation.
