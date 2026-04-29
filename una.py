@@ -793,30 +793,6 @@ def main():
     
     pruned_graph = {k: [d for d in v if d in required_names] for k, v in dep_graph.items() if k in required_names}
     
-    # Cleanup BEFORE sync - remove repos not in current config
-    # This ensures repos not in the current config are removed before syncing
-    scanned = scan_repos()
-    # Only keep repos that are actually required by the current config (including dependencies)
-    required_repo_names = required_names
-    
-    for s_cfg in scanned:
-        if s_cfg["name"] not in required_repo_names:
-            colors.warn(f"Repository '{s_cfg['name']}' found in repo/ but not in config. Removing...")
-            remove_repo(s_cfg["name"], repos_config, arches, bld_base)
-    
-    # Refresh scanned list after cleanup
-    scanned = scan_repos()
-
-    # Clean repos in filesystem that are not in the current config (including git repos)
-    repo_base = BASE_DIR / "repo"
-    if repo_base.exists():
-        for d in repo_base.iterdir():
-            if d.is_dir():
-                # Remove any repo directory not in required_repo_names
-                if d.name not in required_repo_names:
-                    colors.warn(f"Repository '{d.name}' exists in repo/ but not required by config. Removing...")
-                    shutil.rmtree(d, ignore_errors=True)
-
     # Sync/Init for repos - only sync repos in the required dependency set
     for cfg in repos_config:
         # Skip virtual aliases
@@ -861,6 +837,28 @@ def main():
         )
         if needs_reset:
             save_repo_state(cfg)
+
+    # Cleanup AFTER sync - remove repos not in current config
+    # Build set of valid repo directory paths from required repos
+    valid_repo_dirs = set()
+    for r in repos_config:
+        if r["name"] in required_names and "repo_dir" in r:
+            valid_repo_dirs.add(Path(r["repo_dir"]).absolute())
+    
+    # Remove repos from scanned list that are not in valid_repo_dirs
+    scanned = scan_repos()
+    for s_cfg in scanned:
+        if Path(s_cfg["repo_dir"]).absolute() not in valid_repo_dirs:
+            colors.warn(f"Repository '{s_cfg['name']}' found in repo/ but not required by config. Removing...")
+            remove_repo(s_cfg["name"], repos_config, arches, bld_base)
+    
+    # Clean repos in filesystem that are not in valid_repo_dirs (including git repos)
+    repo_base = BASE_DIR / "repo"
+    if repo_base.exists():
+        for d in repo_base.iterdir():
+            if d.is_dir() and d.absolute() not in valid_repo_dirs:
+                colors.warn(f"Repository '{d.name}' exists in repo/ but not required by config. Removing...")
+                shutil.rmtree(d, ignore_errors=True)
 
     try:
         ts = graphlib.TopologicalSorter(pruned_graph)
