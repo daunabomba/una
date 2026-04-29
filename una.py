@@ -7,6 +7,10 @@ import sys
 import configparser
 import json
 from pathlib import Path
+import contextlib
+import io
+import threading
+import select
 
 # Add the script's directory to sys.path so 'mods' can be imported from anywhere
 BASE_DIR = Path(__file__).resolve().parent
@@ -51,6 +55,9 @@ class StepRunner:
         self.bld_base = bld_base
         self.component_snapshots = {} # name -> {staging: {}, target: {}}
         self.cleaned_components = set()
+        # Create build_logs directory at same level as report
+        self.build_logs_dir = self.bld_base / self.arch / "build_logs"
+        self.build_logs_dir.mkdir(parents=True, exist_ok=True)
 
     def run_step(self, cfg, step_name, step_func, **kwargs):
         name = cfg["name"]
@@ -77,8 +84,92 @@ class StepRunner:
             }
             self.cleaned_components.add(name)
 
-        # 2. Execute step
-        step_func(self.staging_dir, self.target_dir, **kwargs)
+        # 2. Execute step with output capturing to log file
+        log_file_path = self.build_logs_dir / f"{name}.txt"
+        colors.info(f"[{self.arch}] Build log: {log_file_path}")
+        
+        # Use file descriptor redirection to capture all output (including subprocesses)
+        # Save original stdout and stderr file descriptors
+        original_stdout_fd = os.dup(1)
+        original_stderr_fd = os.dup(2)
+        
+        # Open log file
+        log_file = open(log_file_path, "w")
+        
+        # Create a pipe for capturing output
+        pipe_read, pipe_write = os.pipe()
+        
+        # Redirect stdout and stderr to the pipe
+        os.dup2(pipe_write, 1)
+        os.dup2(pipe_write, 2)
+        
+        # Buffer for output data
+        output_buffer = []
+        buffer_lock = threading.Lock()
+        stop_event = threading.Event()
+        
+        def reader_thread():
+            """Read from pipe and write to terminal and log file."""
+            # Use a polling approach for cross-platform compatibility
+            while not stop_event.is_set():
+                try:
+                    # Check if there's data to read (with timeout)
+                    ready, _, _ = select.select([pipe_read], [], [], 0.1)
+                    if ready:
+                        data = os.read(pipe_read, 4096)
+                        if not data:
+                            break
+                        # Write to original stdout and log file
+                        os.write(original_stdout_fd, data)
+                        log_file.write(data.decode('utf-8', errors='replace'))
+                        log_file.flush()
+                        with buffer_lock:
+                            output_buffer.append(data)
+                except (OSError, IOError):
+                    break
+            
+            # Drain remaining data
+            try:
+                while True:
+                    data = os.read(pipe_read, 4096)
+                    if not data:
+                        break
+                    os.write(original_stdout_fd, data)
+                    log_file.write(data.decode('utf-8', errors='replace'))
+                    log_file.flush()
+                    with buffer_lock:
+                        output_buffer.append(data)
+            except (OSError, IOError):
+                pass
+        
+        # Start reader thread
+        reader = threading.Thread(target=reader_thread, daemon=True)
+        reader.start()
+        
+        try:
+            # Execute the step function
+            step_func(self.staging_dir, self.target_dir, **kwargs)
+        finally:
+            # Stop the reader thread
+            stop_event.set()
+            
+            # Close the write end of the pipe to signal EOF
+            os.close(pipe_write)
+            
+            # Wait for reader thread to finish
+            reader.join(timeout=2)
+            
+            # Restore original file descriptors
+            os.dup2(original_stdout_fd, 1)
+            os.dup2(original_stderr_fd, 2)
+            
+            # Close our duplicates
+            os.close(original_stdout_fd)
+            os.close(original_stderr_fd)
+            os.close(pipe_read)
+            
+            # Close log file
+            log_file.close()
 
         # 3. Post-snapshot and report
         pre = self.component_snapshots[name]
@@ -519,8 +610,32 @@ def main():
         action="store_true",
         help="Generate a summary of changes in the repositories.",
     )
+    parser.add_argument(
+        "--tmux",
+        action="store_true",
+        help="Run in tmux with split panes (build logs in separate pane). Requires tmux installed.",
+    )
 
     args = parser.parse_args()
+
+    # Handle --tmux: re-exec into tmux with split panes if not already in tmux
+    if args.tmux and not os.environ.get("TMUX"):
+        import subprocess
+        split_script = BASE_DIR / "split-build.sh"
+        if not split_script.exists():
+            colors.error("Error: split-build.sh not found. Cannot use --tmux.")
+            sys.exit(1)
+        
+        # Build the command to run
+        cmd = [str(split_script)] + sys.argv[1:]
+        # Remove --tmux from the command passed to split-build.sh
+        cmd = [str(split_script)] + [a for a in sys.argv[1:] if a != "--tmux"]
+        
+        try:
+            os.execvp(str(split_script), cmd)
+        except Exception as e:
+            colors.error(f"Error: Failed to exec into tmux: {e}")
+            sys.exit(1)
     
     if not args.conf:
         colors.error("Error: --conf is required.")
@@ -893,7 +1008,7 @@ def main():
             new_state = {r["name"]: get_repo_commit(Path(r["repo_dir"])) for r in tools_to_build}
             save_tools_state(new_state)
 
-        target_configs_to_build = [r for r in repos_to_process if r.get("type") != "tools" and not r.get("is_virtual") and r.get("type") != "virtual"]
+        target_configs_to_build = [r for r in repos_to_process if r.get("type") != "tools" and not r.get("is_virtual") and r.get("type") != "virtual" and "repo_dir" in r]
         for arch in arches:
             colors.info(f"\n====== Target Stage: {arch} ======")
             arch_bld_dir = bld_base / arch
