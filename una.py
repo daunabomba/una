@@ -575,23 +575,7 @@ def main():
     if not arches:
         arches = ["x32"]
     
-    # Identify repositories to remove (those in filesystem but not in config)
-    scanned = scan_repos()
-    config_repo_names = {r["name"] for r in repos_config}
-    
-    for s_cfg in scanned:
-        if s_cfg["name"] not in config_repo_names:
-            colors.warn(f"Repository '{s_cfg['name']}' found in repo/ but not in config. Removing...")
-            remove_repo(s_cfg["name"], repos_config, arches, bld_base)
-
-    # Clean unsynced repos (exist in filesystem but were never synced - no .una_config)
-    repo_base = BASE_DIR / "repo"
-    if repo_base.exists():
-        for d in repo_base.iterdir():
-            if d.is_dir() and not (d / ".una_config").exists():
-                if d.name not in config_repo_names:
-                    colors.warn(f"Repository '{d.name}' exists but was never synced. Removing...")
-                    remove_repo(d.name, repos_config, arches, bld_base)
+    # NOTE: Cleanup moved to after dependency loading
 
     # Deduplicate repos_config by absolute repo_dir path (keeping first occurrence)
     # BUT: Don't deduplicate repos that have 'ref' attribute (they reference parent configs)
@@ -718,6 +702,24 @@ def main():
     
     pruned_graph = {k: [d for d in v if d in required_names] for k, v in dep_graph.items() if k in required_names}
     
+    # Cleanup AFTER dependency loading
+    scanned = scan_repos()
+    config_repo_names = {r["name"] for r in repos_config}
+    
+    for s_cfg in scanned:
+        if s_cfg["name"] not in config_repo_names:
+            colors.warn(f"Repository '{s_cfg['name']}' found in repo/ but not in config. Removing...")
+            remove_repo(s_cfg["name"], repos_config, arches, bld_base)
+
+    # Clean unsynced repos (exist in filesystem but were never synced - no .una_config)
+    repo_base = BASE_DIR / "repo"
+    if repo_base.exists():
+        for d in repo_base.iterdir():
+            if d.is_dir() and not (d / ".una_config").exists():
+                if d.name not in config_repo_names:
+                    colors.warn(f"Repository '{d.name}' exists but was never synced. Removing...")
+                    remove_repo(d.name, repos_config, arches, bld_base)
+
     # Sync/Init for repos - only sync repos in the required dependency set
     for cfg in repos_config:
         # Skip virtual aliases
@@ -920,6 +922,8 @@ def main():
             for r in all_target_repos:
                 r_path = Path(r["repo_dir"]).absolute()
                 if r_path in cleaned_dirs: continue
+                if 'repo_dir' not in r:
+                    continue
                 if r_path in tools_dirs:
                     colors.info(f"[{arch}] Skipping git clean for {r['name']} (shared with tools components)")
                     continue
