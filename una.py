@@ -859,9 +859,17 @@ def main():
 
         tools_to_build = []
         if build_all:
-            colors.info("--build-all specified, rebuilding tools...")
-            tools_to_build = all_tools_repos
+            # Check if tools need rebuilding
+            if not tools_state_file.exists() or not tools_marker.exists():
+                colors.info("Tools not built, building...")
+                tools_to_build = all_tools_repos
+            elif check_tools_changed(all_tools_repos):
+                colors.info("Tools source changed, will rebuild...")
+                tools_to_build = all_tools_repos
+            else:
+                colors.info("Tools already built and up to date, skipping...")
         elif explicit_tools_to_build or has_tool_component:
+            # Tools explicitly requested - rebuild
             colors.info("Tools needed, rebuilding...")
             tools_to_build = all_tools_repos
         elif repos_to_process:
