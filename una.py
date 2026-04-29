@@ -621,7 +621,7 @@ def main():
     # Handle --tmux: re-exec into tmux with split panes if not already in tmux
     if args.tmux and not os.environ.get("TMUX"):
         import subprocess
-        split_script = BASE_DIR / "split-build.sh"
+        split_script = BASE_DIR / "mods" / "split-build.sh"
         if not split_script.exists():
             colors.error("Error: split-build.sh not found. Cannot use --tmux.")
             sys.exit(1)

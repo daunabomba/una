@@ -18,7 +18,8 @@ if ! command -v tmux &> /dev/null; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+# Move to parent directory (una base dir, since script is now in mods/)
+cd "$(dirname "$SCRIPT_DIR")"
 
 # Create a unique session name
 SESSION_NAME="una-build-$$"
