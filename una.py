@@ -702,11 +702,14 @@ def main():
             colors.warn(f"Repository '{s_cfg['name']}' found in repo/ but not in config. Removing...")
             remove_repo(s_cfg["name"], repos_config, arches, bld_base)
 
-    # Clean unsynced repos (exist in filesystem but were never synced - no .una_config)
+    # Clean unsynced repos (exist in filesystem but were never synced - no .una_config AND not a git repo)
     repo_base = BASE_DIR / "repo"
     if repo_base.exists():
         for d in repo_base.iterdir():
             if d.is_dir() and not (d / ".una_config").exists():
+                # Don't remove if it's a git repo - it might be waiting to be synced
+                if (d / ".git").exists():
+                    continue
                 if d.name not in config_repo_names:
                     colors.warn(f"Repository '{d.name}' exists but was never synced. Removing...")
                     remove_repo(d.name, repos_config, arches, bld_base)
