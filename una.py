@@ -756,7 +756,7 @@ def main():
             repo_dir=repo_dir, 
             origin_url=cfg.get("origin_url"), 
             una_url=una_url, 
-            sparse_ignore_dirs=cfg["sparse_ignore_dirs"],
+            sparse_ignore_dirs=cfg.get("sparse_ignore_dirs", []),
             with_origin=has_origin,
             reset=needs_reset,
             tag=cfg.get("tag")
