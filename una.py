@@ -983,11 +983,13 @@ def main():
 
             colors.info(f"[{arch}] Building Target Components in Dependency Order")
             for r in target_configs_to_build:
+                colors.info(f"[{arch}] DEBUG: Component '{r['name']}' - is_virtual={r.get('is_virtual')}")
                 if r.get("is_virtual"):
+                    colors.info(f"[{arch}] DEBUG: Skipping virtual component '{r['name']}'")
                     continue
 
                 colors.info(f"[{arch}] Processing component: {r['name']}")
-                
+            
                 if r["name"] == "linux-image":
                     skel_etc = None
                     if 'etc_dir' in global_cfg:
@@ -1005,7 +1007,13 @@ def main():
                         colors.error(f"[{arch}] Error: Skel etc override path {skel_etc} does not exist.")
                         sys.exit(1)
 
-                module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
+                # Debug: show repo being built
+                colors.info(f"[{arch}] DEBUG: Building repo '{r['name']}'")
+                colors.info(f"[{arch}] DEBUG: Repo path: {r['repo_dir']}")
+                una_file = r.get("una_file", "una.py")
+                colors.info(f"[{arch}] DEBUG: Loading module '{una_file}'")
+                module = load_repo_una(r["repo_dir"], una_file)
+                colors.info(f"[{arch}] DEBUG: Loaded module name: {module.__name__}")
                 kwargs = {"arch": arch}
                 
                 if r["name"] in ["linux-headers", "linux-image"]:
