@@ -839,7 +839,6 @@ def main():
                     return True
             return False
 
-        explicit_tools_to_build = [r for r in repos_to_process if r.get("type") == "tools"]
         all_tools_repos = [r for r in repos if r.get("type") == "tools"]
         
         # Also check if any component explicitly requested tools (like build-tools)
@@ -856,10 +855,6 @@ def main():
                 tools_to_build = all_tools_repos
             else:
                 colors.info("Tools already built and up to date, skipping...")
-        elif explicit_tools_to_build or has_tool_component:
-            # Tools explicitly requested - rebuild
-            colors.info("Tools needed, rebuilding...")
-            tools_to_build = all_tools_repos
         elif repos_to_process:
             target_requires_tools = any(r.get("type") != "tools" for r in repos_to_process)
             if target_requires_tools:
@@ -984,6 +979,8 @@ def main():
             colors.info(f"[{arch}] Building Target Components in Dependency Order")
             for r in target_configs_to_build:
                 colors.info(f"[{arch}] DEBUG: Component '{r['name']}' - is_virtual={r.get('is_virtual')}")
+                if r['name'] == 'build-tools':
+                    colors.info(f"[{arch}] DEBUG: build-tools full config: {r}")
                 if r.get("is_virtual"):
                     colors.info(f"[{arch}] DEBUG: Skipping virtual component '{r['name']}'")
                     continue
