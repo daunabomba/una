@@ -912,53 +912,61 @@ def main():
         if not args.no_curses:
             try:
                 from mods.curses_ui import CursesUI
-                ui = CursesUI(log_dir=None)
-                ui.run()
+                # Determine log_dir from conf name
+                conf_name = Path(conf_files[0]).stem
+                log_dir = str(BASE_DIR / "bld" / conf_name / "x32" / "build_logs")
+                ui = CursesUI(log_dir=log_dir)
+                # Pass the build function to run in background
+                ui.start(_run_build, args)
                 return
             except ImportError:
                 colors.error("Error: curses not available")
                 sys.exit(1)
             
+        _run_build(args)
+        return
+    
+    def _run_build(args):
+        """Build function that can be run in a thread with curses."""
         colors.info("Starting build process.")
         all_possible_arches = ["x32", "x86_64", "aarch64", "riscv64"]
-        
         tools_state_file = BASE_DIR / "bld" / "tools" / "tools_state"
 
-        import subprocess
+    import subprocess
 
-        def get_repo_commit(repo_path):
-            if not (repo_path / ".git").exists():
-                return None
-            result = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                cwd=repo_path, capture_output=True, text=True
-            )
-            return result.stdout.strip() if result.returncode == 0 else None
+    def get_repo_commit(repo_path):
+        if not (repo_path / ".git").exists():
+            return None
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_path, capture_output=True, text=True
+        )
+        return result.stdout.strip() if result.returncode == 0 else None
 
-        def load_tools_state():
-            if not tools_state_file.exists():
-                return {}
-            try:
-                with open(tools_state_file, "r") as f:
-                    return json.load(f)
-            except Exception:
-                return {}
+    def load_tools_state():
+        if not tools_state_file.exists():
+            return {}
+        try:
+            with open(tools_state_file, "r") as f:
+                return json.load(f)
+        except Exception:
+            return {}
 
-        def save_tools_state(state):
-            tools_state_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(tools_state_file, "w") as f:
-                json.dump(state, f, indent=2)
+    def save_tools_state(state):
+        tools_state_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(tools_state_file, "w") as f:
+            json.dump(state, f, indent=2)
 
-        def check_tools_changed(tools_repos):
-            current_state = {r["name"]: get_repo_commit(Path(r["repo_dir"])) for r in tools_repos}
-            saved_state = load_tools_state()
+    def check_tools_changed(tools_repos):
+        current_state = {r["name"]: get_repo_commit(Path(r["repo_dir"])) for r in tools_repos}
+        saved_state = load_tools_state()
 
-            for name, commit in current_state.items():
-                if commit is None:
-                    continue
-                if name not in saved_state or saved_state[name] != commit:
-                    return True
-            return False
+        for name, commit in current_state.items():
+            if commit is None:
+                continue
+            if name not in saved_state or saved_state[name] != commit:
+                return True
+        return False
 
         all_tools_repos = [r for r in repos if r.get("type") == "tools"]
         
@@ -1191,7 +1199,9 @@ def main():
                     except subprocess.CalledProcessError:
                         pass
                 cleaned_dirs.add(r_path)
-
+        # End of build process
+        return True
+    
     if args.run:
         target_name = "linux-image"
         proj = next((r for r in repos if r["name"] == target_name), None)
