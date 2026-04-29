@@ -554,6 +554,9 @@ def remove_repo(name, repos, arches, bld_base):
     if repo_dir.exists():
         print(f"Deleting repository directory: {repo_dir}")
         shutil.rmtree(repo_dir)
+    
+    # 3. Remove from repos list to prevent sync attempts
+    repos[:] = [r for r in repos if r["name"] != name]
         
     colors.info(f"Repository '{name}' removed successfully.")
     return True
@@ -790,26 +793,29 @@ def main():
     
     pruned_graph = {k: [d for d in v if d in required_names] for k, v in dep_graph.items() if k in required_names}
     
-    # Cleanup AFTER dependency loading
+    # Cleanup BEFORE sync - remove repos not in current config
+    # This ensures repos not in the current config are removed before syncing
     scanned = scan_repos()
-    config_repo_names = {r["name"] for r in repos_config}
+    # Only keep repos that are actually required by the current config (including dependencies)
+    required_repo_names = required_names
     
     for s_cfg in scanned:
-        if s_cfg["name"] not in config_repo_names:
+        if s_cfg["name"] not in required_repo_names:
             colors.warn(f"Repository '{s_cfg['name']}' found in repo/ but not in config. Removing...")
             remove_repo(s_cfg["name"], repos_config, arches, bld_base)
+    
+    # Refresh scanned list after cleanup
+    scanned = scan_repos()
 
-    # Clean unsynced repos (exist in filesystem but were never synced - no .una_config AND not a git repo)
+    # Clean repos in filesystem that are not in the current config (including git repos)
     repo_base = BASE_DIR / "repo"
     if repo_base.exists():
         for d in repo_base.iterdir():
-            if d.is_dir() and not (d / ".una_config").exists():
-                # Don't remove if it's a git repo - it might be waiting to be synced
-                if (d / ".git").exists():
-                    continue
-                if d.name not in config_repo_names:
-                    colors.warn(f"Repository '{d.name}' exists but was never synced. Removing...")
-                    remove_repo(d.name, repos_config, arches, bld_base)
+            if d.is_dir():
+                # Remove any repo directory not in required_repo_names
+                if d.name not in required_repo_names:
+                    colors.warn(f"Repository '{d.name}' exists in repo/ but not required by config. Removing...")
+                    shutil.rmtree(d, ignore_errors=True)
 
     # Sync/Init for repos - only sync repos in the required dependency set
     for cfg in repos_config:
