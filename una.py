@@ -601,15 +601,6 @@ def main():
         colors.info(f"Deduplicated {len(repos_config) - len(deduped_repos_config)} duplicate repo entries")
     repos_config = deduped_repos_config
 
-    # Ensure any directory in repo/ not in our active config is removed completely
-    repo_base = BASE_DIR / "repo"
-    if repo_base.exists():
-        valid_repo_dirs = {Path(r["repo_dir"]).absolute() for r in repos_config if not r.get("is_virtual")}
-        for d in repo_base.iterdir():
-            if d.is_dir() and d.absolute() not in valid_repo_dirs:
-                colors.warn(f"Unreferenced directory '{d.name}' found in repo/. Removing...")
-                shutil.rmtree(d, ignore_errors=True)
-
     # Automatic Sync/Init for repos
     una_base = get_git_remote_base()
     
