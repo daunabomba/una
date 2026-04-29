@@ -455,6 +455,13 @@ def load_repo_config(config_path: Path):
         
         final_repos.append(config)
     
+    # Convert depends to list BEFORE dependency resolution
+    for cfg in final_repos:
+        if 'depends' in cfg:
+            cfg['depends'] = [s.strip() for s in cfg['depends'].replace(',', ' ').split() if s.strip()]
+        else:
+            cfg['depends'] = []
+
     if requested_repos:
         final_repos_names = {r['name'] for r in final_repos}
         final_repos_map = {r['name']: r for r in final_repos}
@@ -480,10 +487,6 @@ def load_repo_config(config_path: Path):
         final_repos = [r for r in final_repos if r['name'] in needed]
     
     for cfg in final_repos:
-        if 'depends' in cfg:
-            cfg['depends'] = [s.strip() for s in cfg['depends'].replace(',', ' ').split() if s.strip()]
-        else:
-            cfg['depends'] = []
         cfg["is_virtual"] = cfg.get("type") == "virtual"
 
     return final_repos, global_cfg
