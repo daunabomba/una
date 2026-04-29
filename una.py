@@ -703,6 +703,7 @@ def main():
                         dep = dep.strip()
                         if dep and dep not in all_repos_names:
                             next_missing.add(dep)
+                            required_names.add(dep)
             else:
                 colors.warn(f"Warning: Repo config for {name} not found.")
         all_repos_names = {r["name"] for r in repos}
