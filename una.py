@@ -361,8 +361,32 @@ def load_repo_config(config_path: Path):
                 del config[key]
         if kimg:
             config['kernel_image'] = kimg
-            
+        
         final_repos.append(config)
+    
+    if requested_repos:
+        final_repos_names = {r['name'] for r in final_repos}
+        final_repos_map = {r['name']: r for r in final_repos}
+        
+        needed = set()
+        def get_needed(name, visited=None):
+            if visited is None:
+                visited = set()
+            if name in visited:
+                return
+            visited.add(name)
+            if name in final_repos_names:
+                needed.add(name)
+                cfg = final_repos_map.get(name, {})
+                for dep in cfg.get('depends', []):
+                    get_needed(dep, visited)
+                if 'ref' in cfg:
+                    get_needed(cfg['ref'], visited)
+        
+        for name in requested_repos:
+            get_needed(name)
+        
+        final_repos = [r for r in final_repos if r['name'] in needed]
     
     for cfg in final_repos:
         if 'depends' in cfg:
@@ -631,47 +655,81 @@ def main():
     import graphlib
     dep_graph = {r["name"]: r.get("depends", []) for r in repos}
 
+    if args.build is not None and len(args.build) == 0:
+        if 'components' in global_cfg:
+            args.build = [c.strip() for c in global_cfg['components'].replace(',', ' ').split() if c.strip()]
+        else:
+            build_all = True
+
     if args.build is not None and not build_all:
         required_names = set(args.build)
-        missing_targets = required_names - set(dep_graph.keys())
-        if missing_targets:
-            colors.error(f"Error: Component(s) not found: {', '.join(missing_targets)}")
-            sys.exit(1)
-            
-        queue = list(required_names)
-        while queue:
-            curr = queue.pop(0)
-            for dep in dep_graph.get(curr, []):
-                if dep not in required_names:
-                    required_names.add(dep)
-                    queue.append(dep)
-                    
-        pruned_graph = {k: [d for d in v if d in required_names] for k, v in dep_graph.items() if k in required_names}
     else:
         required_names = set(dep_graph.keys())
-        pruned_graph = dep_graph
     
-    missing_deps = required_names - {r["name"] for r in repos_config}
-    if missing_deps:
-        colors.info(f"Loading missing dependencies: {missing_deps}")
-        for dep_name in missing_deps:
-            repo_file = BASE_DIR / "confs" / "repos" / f"{dep_name}.repo"
+    # Expand dependencies
+    dep_graph = {r["name"]: r.get("depends", []) for r in repos}
+    queue = list(required_names)
+    while queue:
+        curr = queue.pop(0)
+        for dep in dep_graph.get(curr, []):
+            if dep not in required_names:
+                required_names.add(dep)
+                queue.append(dep)
+    
+    pruned_graph = {k: [d for d in v if d in required_names] for k, v in dep_graph.items() if k in required_names}
+    
+    all_repos_names = {r["name"] for r in repos}
+    missing = required_names - all_repos_names
+    if missing:
+        colors.info(f"Loading missing dependencies: {missing}")
+        loaded_names = set()
+        while missing:
+            name = missing.pop()
+            if name in loaded_names:
+                continue
+            loaded_names.add(name)
+            repo_file = BASE_DIR / "confs" / "repos" / f"{name}.repo"
             if repo_file.exists():
                 rcp = configparser.ConfigParser()
                 rcp.read(repo_file)
                 for section in rcp.sections():
-                    repos_config.append(dict(rcp[section]))
+                    cfg = dict(rcp[section])
+                    cfg['name'] = section
+                    repos_config.append(cfg)
+                    if not cfg.get("is_virtual", False):
+                        if una_base:
+                            base = una_base or "UNKNOWN_BASE"
+                            if not base.endswith("/") and not base.endswith(":"):
+                                base += "/"
+                            cfg["una_url"] = f"{base}{cfg.get('una_repo', '')}"
+                        repos.append(cfg)
+                    for dep in cfg.get("depends", "").replace(",", " ").split():
+                        dep = dep.strip()
+                        if dep and dep not in all_repos_names:
+                            missing.add(dep)
+                            required_names.add(dep)
+        # Re-expand dependencies after loading
+        dep_graph = {r["name"]: r.get("depends", []) for r in repos}
+        for name in list(required_names):
+            for dep in dep_graph.get(name, []):
+                if dep not in required_names:
+                    required_names.add(dep)
             else:
-                colors.warn(f"Warning: Repo config for {dep_name} not found.")
+                colors.warn(f"Warning: Repo config for {name} not found.")
+        dep_graph = {r["name"]: r.get("depends", []) for r in repos}
+        pruned_graph = {k: [d for d in v if d in required_names] for k, v in dep_graph.items() if k in required_names}
     
     # Sync/Init for repos - only sync repos in the required dependency set
     for cfg in repos_config:
-        # Skip cloning for virtual aliases
+        # Skip virtual aliases
         if cfg.get("is_virtual"):
             continue
         
         # Only sync repos that are needed for build or active operations
         if cfg["name"] not in required_names:
+            continue
+            
+        if 'repo_dir' not in cfg:
             continue
             
         repo_dir = Path(cfg["repo_dir"])
@@ -721,7 +779,8 @@ def main():
 
     # Check if repos exist before building or rebasing
     if (args.build is not None or args.rebase):
-        missing = [r["name"] for r in repos_to_process if not r.get("is_virtual") and not Path(r["repo_dir"]).exists()]
+        missing = [r["name"] for r in repos_to_process 
+                  if not r.get("is_virtual") and "repo_dir" in r and not Path(r["repo_dir"]).exists()]
         if missing:
             colors.warn(f"Warning: The following repository directories are missing: {', '.join(missing)}")
             print("These should have been initialized automagically if a base URL was available.")
