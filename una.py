@@ -853,17 +853,19 @@ def main():
 
         explicit_tools_to_build = [r for r in repos_to_process if r.get("type") == "tools"]
         all_tools_repos = [r for r in repos if r.get("type") == "tools"]
+        
+        # Also check if any component explicitly requested tools (like build-tools)
+        has_tool_component = 'build-tools' in required_names
 
         tools_to_build = []
         if build_all:
             colors.info("--build-all specified, rebuilding tools...")
             tools_to_build = all_tools_repos
-        elif explicit_tools_to_build:
-            colors.info("Explicit tools in build list, rebuilding...")
+        elif explicit_tools_to_build or has_tool_component:
+            colors.info("Tools needed, rebuilding...")
             tools_to_build = all_tools_repos
-        else:
-            # Check if target repos require tools OR if no specific repos to process (default case)
-            target_requires_tools = any(r.get("type") != "tools" for r in repos_to_process) if repos_to_process else True
+        elif repos_to_process:
+            target_requires_tools = any(r.get("type") != "tools" for r in repos_to_process)
             if target_requires_tools:
                 if not tools_state_file.exists() or not tools_marker.exists():
                     colors.info("Tools not built, building...")
@@ -873,6 +875,16 @@ def main():
                     tools_to_build = all_tools_repos
                 else:
                     colors.info("Tools already built and up to date, skipping...")
+        else:
+            # No specific target - this is a default --build without args
+            if not tools_state_file.exists() or not tools_marker.exists():
+                colors.info("Tools not built, building...")
+                tools_to_build = all_tools_repos
+            elif check_tools_changed(all_tools_repos):
+                colors.info("Tools source changed, will rebuild...")
+                tools_to_build = all_tools_repos
+            else:
+                colors.info("Tools already built and up to date, skipping...")
 
         if tools_to_build:
             colors.info("\n--- Tools Stage ---")
