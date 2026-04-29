@@ -862,7 +862,8 @@ def main():
             colors.info("Explicit tools in build list, rebuilding...")
             tools_to_build = all_tools_repos
         else:
-            target_requires_tools = any(r.get("type") != "tools" for r in repos_to_process)
+            # Check if target repos require tools OR if no specific repos to process (default case)
+            target_requires_tools = any(r.get("type") != "tools" for r in repos_to_process) if repos_to_process else True
             if target_requires_tools:
                 if not tools_state_file.exists() or not tools_marker.exists():
                     colors.info("Tools not built, building...")
