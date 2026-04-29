@@ -801,8 +801,7 @@ def main():
         colors.info("Starting build process.")
         all_possible_arches = ["x32", "x86_64", "aarch64", "riscv64"]
         
-        tools_marker = tools_install_dir / "tools_built"
-        tools_state_file = BASE_DIR / "bld" / "tools_state"
+        tools_state_file = BASE_DIR / "bld" / "tools" / "tools_state"
 
         import subprocess
 
@@ -849,7 +848,7 @@ def main():
         tools_to_build = []
         if build_all:
             # Check if tools need rebuilding
-            if not tools_state_file.exists() or not tools_marker.exists():
+            if not tools_state_file.exists():
                 colors.info("Tools not built, building...")
                 tools_to_build = all_tools_repos
             elif check_tools_changed(all_tools_repos):
@@ -874,7 +873,7 @@ def main():
                     colors.info("Tools already built and up to date, skipping...")
         else:
             # No specific target - this is a default --build without args
-            if not tools_state_file.exists() or not tools_marker.exists():
+            if not tools_state_file.exists():
                 colors.info("Tools not built, building...")
                 tools_to_build = all_tools_repos
             elif check_tools_changed(all_tools_repos):
@@ -892,8 +891,6 @@ def main():
                 if hasattr(module, "tools_install"): module.tools_install(tools_install_dir)
             new_state = {r["name"]: get_repo_commit(Path(r["repo_dir"])) for r in tools_to_build}
             save_tools_state(new_state)
-            tools_marker.parent.mkdir(parents=True, exist_ok=True)
-            tools_marker.write_text("tools up-to-date\n")
 
         target_configs_to_build = [r for r in repos_to_process if r.get("type") != "tools"]
         for arch in arches:
@@ -920,14 +917,12 @@ def main():
             # Clean ALL target repos before build to avoid stale configs/artifacts between arches
             # This is critical for the kernel which relies on its .config in the source tree
             cleaned_dirs = set()
-            tools_dirs = {Path(r["repo_dir"]).absolute() for r in repos if r["type"] == "tools"}
-            all_target_repos = [r for r in repos if r.get("type") != "tools"]
+            tools_dirs = {Path(r["repo_dir"]).absolute() for r in repos if r.get("type") == "tools" and "repo_dir" in r}
+            all_target_repos = [r for r in repos if r.get("type") != "tools" and "repo_dir" in r]
             
             for r in all_target_repos:
                 r_path = Path(r["repo_dir"]).absolute()
                 if r_path in cleaned_dirs: continue
-                if 'repo_dir' not in r:
-                    continue
                 if r_path in tools_dirs:
                     colors.info(f"[{arch}] Skipping git clean for {r['name']} (shared with tools components)")
                     continue
@@ -940,11 +935,11 @@ def main():
                 if is_repo_dirty(r_path):
                     colors.error(f"[{arch}] ERROR: Repository {r['name']} is dirty. Please commit or stash changes before building.")
                     sys.exit(1)
-                subprocess.run(["git", "clean", "-fdx"], cwd=r_path, check=True)
+                subprocess.run(["git", "clean", "-fdx", "-e", ".una_config"], cwd=r_path, check=True)
                 # Ensure submodules are also cleaned to avoid arch-mismatch in static libs (e.g. nsd -> simdzone)
                 if (r_path / ".gitmodules").exists():
                     try:
-                        subprocess.run(["git", "submodule", "foreach", "--recursive", "git", "clean", "-fdx"], cwd=r_path, check=True)
+                        subprocess.run(["git", "submodule", "foreach", "--recursive", "git", "clean", "-fdx", "-e", ".una_config"], cwd=r_path, check=True)
                     except subprocess.CalledProcessError:
                         # Submodules might not be initialized yet, which is fine
                         pass
