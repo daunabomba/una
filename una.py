@@ -23,6 +23,12 @@ from mods import colors
 
 skel_dir = BASE_DIR / "skel"
 
+try:
+    import curses
+    CURSES_OK = True
+except ImportError:
+    CURSES_OK = False
+
 import importlib.util
 
 
@@ -614,32 +620,13 @@ def main():
         help="Generate a summary of changes in the repositories.",
     )
     parser.add_argument(
-        "--tmux",
+        "--curses",
         action="store_true",
-        help="Run in tmux with split panes (build logs in separate pane). Requires tmux installed.",
+        help="Use curses split-screen: top 50%% for una output, bottom 50%% for build logs.",
     )
 
     args = parser.parse_args()
 
-    # Handle --tmux: re-exec into tmux with split panes if not already in tmux
-    if args.tmux and not os.environ.get("TMUX"):
-        import subprocess
-        split_script = BASE_DIR / "mods" / "split-build.sh"
-        if not split_script.exists():
-            colors.error("Error: split-build.sh not found. Cannot use --tmux.")
-            sys.exit(1)
-        
-        # Build the command to run
-        cmd = [str(split_script)] + sys.argv[1:]
-        # Remove --tmux from the command passed to split-build.sh
-        cmd = [str(split_script)] + [a for a in sys.argv[1:] if a != "--tmux"]
-        
-        try:
-            os.execvp(str(split_script), cmd)
-        except Exception as e:
-            colors.error(f"Error: Failed to exec into tmux: {e}")
-            sys.exit(1)
-    
     if not args.conf:
         colors.error("Error: --conf is required.")
         sys.exit(1)
@@ -922,6 +909,16 @@ def main():
 
 
     if args.build is not None or build_all:
+        if args.curses:
+            try:
+                from mods.curses_ui import CursesUI
+                ui = CursesUI(log_dir=None)
+                ui.run()
+                return
+            except ImportError:
+                colors.error("Error: curses not available")
+                sys.exit(1)
+            
         colors.info("Starting build process.")
         all_possible_arches = ["x32", "x86_64", "aarch64", "riscv64"]
         
