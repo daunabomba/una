@@ -153,9 +153,9 @@ def list_repos(repos, target_type=None):
     If target_type is None, prints all.
     """
     if target_type == "target":
-        filtered = [r for r in repos if r.get("type") != "tools"]
+        filtered = [r for r in repos if r.get("type") != "tools" and not r.get("is_virtual") and r.get("type") != "virtual"]
     else:
-        filtered = [r for r in repos if target_type is None or r.get("type") == target_type]
+        filtered = [r for r in repos if (target_type is None or r.get("type") == target_type) and not r.get("is_virtual") and r.get("type") != "virtual"]
     for r in filtered:
         script_info = f" (Script: {r.get('una_file', 'una.py')})"
         print(f"[{r.get('type', 'unknown')}] {r['name']} -> {r['repo_dir']}{script_info}")
@@ -785,6 +785,9 @@ def main():
         
         processed_dirs = set()
         for r in repos:
+            # Skip virtual components that don't have repo_dir
+            if r.get("is_virtual") or r.get("type") == "virtual" or "repo_dir" not in r:
+                continue
             r_path = Path(r["repo_dir"]).absolute()
             if r_path in processed_dirs:
                 continue
@@ -1055,6 +1058,9 @@ def main():
         print("\n--- Post-build Workspace Cleanup ---")
         cleaned_dirs = set()
         for r in repos:
+            # Skip virtual components that don't have repo_dir
+            if r.get("is_virtual") or r.get("type") == "virtual" or "repo_dir" not in r:
+                continue
             r_path = Path(r["repo_dir"]).absolute()
             if r_path in cleaned_dirs: continue
             if r_path.exists() and (r_path / ".git").exists():
@@ -1282,6 +1288,9 @@ def main():
         # 2. Clean workspace sub-repos
         cleaned_dirs = set()
         for r in repos:
+            # Skip virtual components that don't have repo_dir
+            if r.get("is_virtual") or r.get("type") == "virtual" or "repo_dir" not in r:
+                continue
             r_path = Path(r["repo_dir"]).absolute()
             if r_path in cleaned_dirs: continue
             if r_path.exists() and (r_path / ".git").exists():
@@ -1295,7 +1304,7 @@ def main():
         # 2.5 Clean unreferenced repos in repo/
         repo_base = BASE_DIR / "repo"
         if repo_base.exists():
-            valid_repo_dirs = {Path(r["repo_dir"]).absolute() for r in repos if not r.get("is_virtual")}
+            valid_repo_dirs = {Path(r["repo_dir"]).absolute() for r in repos if not r.get("is_virtual") and "repo_dir" in r}
             for d in repo_base.iterdir():
                 if d.is_dir() and d.absolute() not in valid_repo_dirs:
                     print(f"Removing unreferenced directory {d}...")
