@@ -912,7 +912,7 @@ def main():
         if not args.no_curses:
             try:
                 from mods.curses_ui import CursesUI
-                from build import init_build, run_build
+                from mods.build import init_build, run_build
                 # Initialize build module
                 init_build(
                     colors, load_repo_una, StepRunner,
@@ -935,7 +935,7 @@ def main():
                 sys.exit(1)
             
         # Run build directly (no curses)
-        from build import init_build, run_build
+        from mods.build import init_build, run_build
         init_build(
             colors, load_repo_una, StepRunner,
             get_target_triple, get_arch_flags,
