@@ -22,8 +22,11 @@ class Writer:
             for line in text.rstrip().split('\n'):
                 if line:
                     line = line[:self.width - 2]
-                self.win.addstr(line + '\n')
-            self.win.refresh()
+                    self.win.addstr(line + '\n')
+                    self.win.refresh()  # Flush after each line
+                else:
+                    self.win.addstr('\n')
+                    self.win.refresh()
         return len(text)
         
     def flush(self):

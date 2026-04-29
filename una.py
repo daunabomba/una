@@ -620,9 +620,9 @@ def main():
         help="Generate a summary of changes in the repositories.",
     )
     parser.add_argument(
-        "--curses",
+        "--no-curses",
         action="store_true",
-        help="Use curses split-screen: top 50%% for una output, bottom 50%% for build logs.",
+        help="Disable curses split-screen display (curses is enabled by default).",
     )
 
     args = parser.parse_args()
@@ -909,7 +909,7 @@ def main():
 
 
     if args.build is not None or build_all:
-        if args.curses:
+        if not args.no_curses:
             try:
                 from mods.curses_ui import CursesUI
                 ui = CursesUI(log_dir=None)
