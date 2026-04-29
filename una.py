@@ -602,7 +602,10 @@ def main():
     # Build repos list (non-virtual only) for dependency analysis
     repos = []
     for r in repos_config:
-        if r.get("is_virtual", True):
+        # Ensure is_virtual is set
+        if "is_virtual" not in r:
+            r["is_virtual"] = r.get("type") == "virtual"
+        if r.get("is_virtual"):
             continue
         config = r.copy()
         # Merge behavior driven by config if merge is enabled
@@ -887,7 +890,7 @@ def main():
             new_state = {r["name"]: get_repo_commit(Path(r["repo_dir"])) for r in tools_to_build}
             save_tools_state(new_state)
 
-        target_configs_to_build = [r for r in repos_to_process if r.get("type") != "tools"]
+        target_configs_to_build = [r for r in repos_to_process if r.get("type") != "tools" and not r.get("is_virtual") and r.get("type") != "virtual"]
         for arch in arches:
             colors.info(f"\n====== Target Stage: {arch} ======")
             arch_bld_dir = bld_base / arch
@@ -978,11 +981,8 @@ def main():
 
             colors.info(f"[{arch}] Building Target Components in Dependency Order")
             for r in target_configs_to_build:
-                colors.info(f"[{arch}] DEBUG: Component '{r['name']}' - is_virtual={r.get('is_virtual')}")
-                if r['name'] == 'build-tools':
-                    colors.info(f"[{arch}] DEBUG: build-tools full config: {r}")
-                if r.get("is_virtual"):
-                    colors.info(f"[{arch}] DEBUG: Skipping virtual component '{r['name']}'")
+                if r.get("is_virtual") or r.get("type") == "virtual":
+                    colors.info(f"[{arch}] Skipping virtual component '{r['name']}'")
                     continue
 
                 colors.info(f"[{arch}] Processing component: {r['name']}")
