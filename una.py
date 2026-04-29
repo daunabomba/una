@@ -538,8 +538,8 @@ def main():
         sys.exit(1)
     
     conf_name = Path(conf_files[0]).stem
-    bld_base = BASE_DIR / conf_name
-    tools_install_dir = bld_base / "tools"
+    bld_base = BASE_DIR / "bld" / conf_name
+    tools_install_dir = BASE_DIR / "bld" / "tools"
     test_disk = bld_base / "test.img"
 
     if args.create_disk:
