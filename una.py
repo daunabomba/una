@@ -858,7 +858,7 @@ def main():
         elif repos_to_process:
             target_requires_tools = any(r.get("type") != "tools" for r in repos_to_process)
             if target_requires_tools:
-                if not tools_state_file.exists() or not tools_marker.exists():
+                if not tools_state_file.exists():
                     colors.info("Tools not built, building...")
                     tools_to_build = all_tools_repos
                 elif check_tools_changed(all_tools_repos):
