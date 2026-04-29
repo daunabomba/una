@@ -2,3 +2,4 @@
 ref = llvm-tools
 una_file = una/runtime.py
 type = target
+depends = build-tools
