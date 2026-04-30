@@ -1219,10 +1219,10 @@ pruned_graph = {k: [d for d in v if d in required_names] for k, v in dep_graph.i
                         dest_img = bld_base / kernel_name
                         
                         if src_img.exists():
-                            print(f"[{arch}] Copying kernel image to {dest_img}")
+                            colors.info(f"[{arch}] Copying kernel image {src_img} to {dest_img}")
                             shutil.copy(src_img, dest_img)
                         else:
-                            print(f"[{arch}] Warning: Kernel image not found at {src_img}")
+                            colors.error(f"[{arch}] Warning: Kernel image not found at {src_img}")
                         
                         # Sync back updated config to source
                         src_config = Path(r["repo_dir"]) / ".config"
