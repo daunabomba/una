@@ -62,6 +62,11 @@ def repo_synced(name: str, repo_dir: Path) -> None:
     _write(f"REPO SYNCED: {name} -> {repo_dir}")
 
 
+def repo_cleaned(repo_dir: Path) -> None:
+    """Log repo cleanup."""
+    _write(f"REPO CLEANED: {repo_dir}")
+
+
 def build_step_start(arch: str, name: str, step: str) -> None:
     """Log build step start."""
     _write(f"BUILD START: [{arch}] {name}::{step}")
