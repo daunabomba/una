@@ -1165,13 +1165,13 @@ def main():
             
             colors.info(f"[{arch}] Building Target Components in Dependency Order")
             for r in target_configs_to_build:
-                if r.get("is_virtual") or r.get("type") == "virtual":
+                 if r.get("is_virtual") or r.get("type") == "virtual":
                     colors.info(f"[{arch}] Skipping virtual component '{r['name']}'")
                     continue
                 
-                colors.info(f"[{arch}] Processing component: {r['name']}")
+                 colors.info(f"[{arch}] Processing component: {r['name']}")
                 
-                if r["name"] == "linux-image":
+                 if r["name"] == "linux-image":
                     skel_etc = None
                     if 'etc_dir' in global_cfg:
                         skel_etc = BASE_DIR / global_cfg['etc_dir']
@@ -1189,12 +1189,12 @@ def main():
                         sys.exit(1)
             
                  # Debug: show repo being built
-             colors.info(f"[{arch}] DEBUG: Building repo '{r['name']}'")
-             colors.info(f"[{arch}] DEBUG: Repo path: {r['repo_dir']}")
-             una_file = r.get("una_file", "una.py")
-             colors.info(f"[{arch}] DEBUG: Loading module '{una_file}'")
-             module = load_repo_una(r["repo_dir"], una_file)
-             colors.info(f"[{arch}] DEBUG: Loaded module name: {module.__name__}")
+                 colors.info(f"[{arch}] DEBUG: Building repo '{r['name']}'")
+                 colors.info(f"[{arch}] DEBUG: Repo path: {r['repo_dir']}")
+                 una_file = r.get("una_file", "una.py")
+                 colors.info(f"[{arch}] DEBUG: Loading module '{una_file}'")
+                 module = load_repo_una(r["repo_dir"], una_file)
+                 colors.info(f"[{arch}] DEBUG: Loaded module name: {module.__name__}")
                  kwargs = {"arch": arch}
             
                  if r["name"] in ["linux-headers", "linux-image"]:
