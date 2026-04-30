@@ -4,6 +4,7 @@ import os
 import sys
 from tqdm import tqdm
 from mods import colors
+from mods.trace import is_enabled, repo_synced, repo_created, repo_removed
 
 default_branch = "una"
 remote_una_name = "una"
@@ -149,6 +150,9 @@ def init_or_reset_repo(
     if reset:
         colors.info(f"Fetching latest changes from {remote_una_name}...")
         try:
+            if is_enabled():
+                from mods.trace import repo_synced
+                repo_synced(repo_dir, Path(repo_dir))
             repo.remotes[remote_una_name].fetch(
                 progress=TqdmProgress(), tags=True, prune=True
             )
@@ -267,7 +271,12 @@ def rebase_and_push(
         if squash:
             # 1. Perform a real rebase first to ensure patches are correctly applied to the new code
             colors.info(f"Applying patches via rebase onto {branch_name}...")
+            if is_enabled():
+                from mods.trace import build_step_start, build_step_end
+                build_step_start('git', repo_dir, 'rebase')
             repo.git.rebase(branch_name)
+            if is_enabled():
+                build_step_end('git', repo_dir, 'rebase')
 
             # Check if we are actually different from the base.
             # If our tree is identical to the base, and we have no commits to squash, we should skip.
@@ -292,7 +301,12 @@ def rebase_and_push(
                     colors.info("No changes to squash; already up to date.")
         else:
             # Standard rebase
+            if is_enabled():
+                from mods.trace import build_step_start, build_step_end
+                build_step_start('git', repo_dir, 'rebase')
             repo.git.rebase(branch_name)
+            if is_enabled():
+                build_step_end('git', repo_dir, 'rebase')
             # Create an automatic rebase marker if not squashing
             repo.git.commit("--allow-empty", "-m", "rebase")
     except Exception as e:

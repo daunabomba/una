@@ -1146,7 +1146,9 @@ def main():
                     continue
                 import subprocess
 
-                subprocess.run(["git", "clean", "-fdx", "-q"], cwd=r_path, check=True)
+                colors.error(f"[{arch}] GIT CLEAN")
+
+                subprocess.run(["git", "clean", "-qfdx"], cwd=r_path, check=True)
                 if (r_path / ".gitmodules").exists():
                     try:
                         subprocess.run(
@@ -1157,7 +1159,7 @@ def main():
                                 "--recursive",
                                 "git",
                                 "clean",
-                                "-fdx",
+                                "-qfdx",
                             ],
                             cwd=r_path,
                             check=True,
