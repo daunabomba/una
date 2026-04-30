@@ -360,9 +360,14 @@ def save_and_push(
     repo.remotes[remote_name].push(f"refs/tags/{tag}:refs/tags/{tag}", force=True)
 
 
+def get_all_arches() -> list:
+    """Return list of all supported architectures."""
+    return ["x32", "x86_64", "aarch64", "riscv64"]
+
+
 def get_target_triple(arch: str) -> str:
     if arch == "x32":
-        return "x86_64-linux-muslx32"
+        return "x32-linux-muslx32"
     elif arch == "x86_64":
         return "x86_64-linux-musl"
     elif arch == "aarch64":

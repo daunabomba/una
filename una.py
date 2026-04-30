@@ -19,6 +19,7 @@ from mods.utils import (
     init_or_reset_repo,
     get_target_triple,
     get_arch_flags,
+    get_all_arches,
     TqdmProgress,
     is_repo_dirty,
 )
@@ -628,9 +629,14 @@ def main():
 
     arches = []
     if "arch" in global_cfg:
-        arches = [a.strip() for a in global_cfg["arch"].replace(",", " ").split() if a.strip()]
+        arch = global_cfg["arch"].strip()
+        if " " in arch:
+            raise ConfigError(f"Architecture must be a single value, not: '{arch}'")
+        if arch not in get_all_arches():
+            raise ConfigError(f"Architecture must be one of {get_all_arches()}, got: '{arch}'")
+        arches = [arch]
     if not arches:
-        arches = ["x32"]
+        raise ConfigError(f"Architecture must be specified. Valid options: {get_all_arches()}")
 
     # Deduplicate repos_config
     repos_config = deduplicate_repos(repos_config)

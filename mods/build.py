@@ -16,6 +16,7 @@ from mods.trace import (
     build_step_start,
     build_step_end,
 )
+from mods.utils import get_all_arches
 
 # These will be set by init_build()
 colors = None
@@ -87,7 +88,6 @@ def init_build(
 def run_build(args):
     """Main build function."""
     colors.info("Starting build process.")
-    all_possible_arches = ["x32", "x86_64", "aarch64", "riscv64"]
     tools_state_file = BASE_DIR / "bld" / "tools" / "tools_state"
 
     def get_repo_commit(repo_path):
@@ -170,7 +170,7 @@ def run_build(args):
         for r in tools_to_build:
             module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
             if hasattr(module, "tools_configure"):
-                module.tools_configure(tools_install_dir, arches=all_possible_arches)
+                module.tools_configure(tools_install_dir, arches=get_all_arches())
             if hasattr(module, "tools_build"):
                 module.tools_build(tools_install_dir)
             if hasattr(module, "tools_install"):
