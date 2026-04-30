@@ -2,6 +2,7 @@
 Git operations orchestration for una.
 Wraps utils.py functions for repo-level workflows.
 """
+
 from pathlib import Path
 from git import Repo
 
@@ -16,7 +17,9 @@ from mods.utils import (
 from mods.trace import is_enabled, repo_created, repo_synced
 
 
-def handle_top_level_repo(base_dir: Path, action: str, tag: str = None, squash: bool = True):
+def handle_top_level_repo(
+    base_dir: Path, action: str, tag: str = None, squash: bool = True
+):
     """
     Handle git operations for the top-level una repository.
 
@@ -135,6 +138,7 @@ def _handle_repo_operation(cfg: dict, r_path: Path, action: str, tag: str = None
 def print_top_level_status(base_dir: Path):
     """Print git status for top-level repository."""
     import subprocess
+
     print("=== Top-level Repository (una) ===")
     subprocess.run(["git", "status", "-sb"], cwd=base_dir)
 
@@ -153,8 +157,10 @@ def sync_repo(cfg: dict, una_base: str) -> bool:
 
     if needs_reset:
         if not una_base:
-            colors.warn(f"Warning: New repository '{cfg['name']}' found in config but 'una' base URL is unknown. "
-                  "Please ensure the top-level repository has a remote named 'una'. Skipping initialization.")
+            colors.warn(
+                f"Warning: New repository '{cfg['name']}' found in config but 'una' base URL is unknown. "
+                "Please ensure the top-level repository has a remote named 'una'. Skipping initialization."
+            )
             return False
         colors.info(f"New repository '{cfg['name']}' detected. Initializing...")
 
@@ -172,13 +178,13 @@ def sync_repo(cfg: dict, una_base: str) -> bool:
         sparse_ignore_dirs=cfg.get("sparse_ignore_dirs", []),
         with_origin=has_origin,
         reset=needs_reset,
-        tag=cfg.get("tag")
+        tag=cfg.get("tag"),
     )
 
     if is_enabled():
         if needs_reset:
-            repo_created(cfg['name'], repo_dir)
+            repo_created(cfg["name"], repo_dir)
         else:
-            repo_synced(cfg['name'], repo_dir)
+            repo_synced(cfg["name"], repo_dir)
 
     return needs_reset

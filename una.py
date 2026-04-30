@@ -995,7 +995,7 @@ def main():
                     )
                     sys.exit(1)
                 subprocess.run(
-                    ["git", "clean", "-fdx", "-e", ".una_config"],
+                    ["git", "clean", "-fdx", "-e", ".una_config", "-q"],
                     cwd=r_path,
                     check=True,
                 )
@@ -1098,10 +1098,10 @@ def main():
                             shutil.copy(src_img, dest_img)
 
                             # Copy initfilelist if it exists
-                                init_list_path = Path(r["repo_dir"]) / "initfilelist.txt"
+                            init_list_path = Path(r["repo_dir"]) / "initfilelist.txt"
                             if init_list_path.exists():
                                 dest_init_list = (
-                                bld_base / f"{kernel_name}.initfilelist.txt"
+                                    bld_base / f"{kernel_name}.initfilelist.txt"
                                 )
                                 colors.info(
                                     f"[{arch}] Copying initfilelist {init_list_path} to {dest_init_list}"
@@ -1146,7 +1146,7 @@ def main():
                     continue
                 import subprocess
 
-                subprocess.run(["git", "clean", "-fdx"], cwd=r_path, check=True)
+                subprocess.run(["git", "clean", "-fdx", "-q"], cwd=r_path, check=True)
                 if (r_path / ".gitmodules").exists():
                     try:
                         subprocess.run(
@@ -1259,7 +1259,7 @@ def main():
                         f"ERROR: Repository {r['name']} is dirty. Stopping global cleanup."
                     )
                     sys.exit(1)
-                subprocess.run(["git", "clean", "-fdx"], cwd=r_path, check=True)
+                subprocess.run(["git", "clean", "-fdx", "-q"], cwd=r_path, check=True)
                 cleaned_dirs.add(r_path)
 
         # 2.5 Clean unreferenced repos in repo/
@@ -1281,7 +1281,7 @@ def main():
             print("ERROR: Top-level repository is dirty. Stopping global cleanup.")
             sys.exit(1)
         subprocess.run(
-            ["git", "clean", "-xfd", "-e", "bld/", "-e", "repo/"], cwd=BASE_DIR
+            ["git", "clean", "-xfd", "-e", "bld/", "-e", "repo/", "-q"], cwd=BASE_DIR
         )
 
     if args.report:

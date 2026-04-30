@@ -18,7 +18,7 @@ for section in cp.sections():
     if section == "una":
         una_section = dict(cp[section])
         continue
-    
+
     # Write to individual .repo file
     repo_file = repos_dir / f"{section}.repo"
     with open(repo_file, "w") as f:
@@ -27,7 +27,7 @@ for section in cp.sections():
             f.write(f"{k} = {v}\n")
     repos.append(f"confs/repos/{section}.repo")
 
-# Also let's extract the commented out rust part manually if needed, 
+# Also let's extract the commented out rust part manually if needed,
 # but it's simpler to just copy it or ignore it. For now configparser ignores comments.
 
 # Write new default.conf

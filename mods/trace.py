@@ -1,9 +1,9 @@
 """
 Trace logging for una - logs repo and build operations to a file.
 """
+
 from pathlib import Path
 from datetime import datetime
-
 
 _trace_file = None
 

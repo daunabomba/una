@@ -1,6 +1,7 @@
 """
 Dependency resolution for una build system.
 """
+
 import graphlib
 from pathlib import Path
 
@@ -35,6 +36,7 @@ def get_build_order(repos: list, required_names: set = None) -> tuple[list, dict
     if "linux-image" in all_names:
         # Find components that depend on linux-image (directly or indirectly)
         depends_on_linux = set()
+
         def find_deps_on_linux(name: str, visited: set):
             if name in visited:
                 return
@@ -43,10 +45,13 @@ def get_build_order(repos: list, required_names: set = None) -> tuple[list, dict
                 if name in deps and n not in depends_on_linux:
                     depends_on_linux.add(n)
                     find_deps_on_linux(n, visited)
+
         find_deps_on_linux("linux-image", set())
 
         # linux-image depends on all except itself and those that depend on it
-        other_names = [n for n in all_names if n != "linux-image" and n not in depends_on_linux]
+        other_names = [
+            n for n in all_names if n != "linux-image" and n not in depends_on_linux
+        ]
         dep_graph["linux-image"] = other_names
 
     if required_names:
@@ -104,7 +109,7 @@ def get_keep_dirs(repos: list, dep_graph: dict, config_components: set) -> set:
     """
     keep = set()
 
-    name_map = {r['name']: r for r in repos}
+    name_map = {r["name"]: r for r in repos}
 
     for name in config_components:
         if name not in name_map:
@@ -127,11 +132,14 @@ def get_keep_dirs(repos: list, dep_graph: dict, config_components: set) -> set:
 
 def filter_repos_for_build(repos: list) -> list:
     """Filter repos to non-virtual, non-tools repos with repo_dir."""
-    return [r for r in repos
-            if not r.get("is_virtual")
-            and r.get("type") != "virtual"
-            and r.get("type") != "tools"
-            and "repo_dir" in r]
+    return [
+        r
+        for r in repos
+        if not r.get("is_virtual")
+        and r.get("type") != "virtual"
+        and r.get("type") != "tools"
+        and "repo_dir" in r
+    ]
 
 
 def filter_repos_for_sync(repos: list) -> list:

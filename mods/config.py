@@ -1,6 +1,7 @@
 """
 Configuration loading and validation for una.
 """
+
 import configparser
 import json
 import sys
@@ -12,10 +13,10 @@ from mods import colors
 BASE_DIR = None
 
 REQUIRED_FIELDS = {
-    'target': ['repo_dir', 'type'],
-    'tools': ['repo_dir', 'type'],
-    'virtual': ['type'],
-    'default': ['repo_dir', 'type']
+    "target": ["repo_dir", "type"],
+    "tools": ["repo_dir", "type"],
+    "virtual": ["type"],
+    "default": ["repo_dir", "type"],
 }
 
 
@@ -27,6 +28,7 @@ def set_base_dir(base_dir: Path):
 
 class ConfigError(Exception):
     """Raised for configuration errors (circular refs, missing refs, etc.)."""
+
     pass
 
 
@@ -36,16 +38,16 @@ def validate_repo_config(cfg: dict, all_repo_names: set, skip_fields: set) -> li
     Returns list of error messages (empty if valid).
     """
     errors = []
-    name = cfg.get('name', '<unnamed>')
-    repo_type = cfg.get('type', '')
+    name = cfg.get("name", "<unnamed>")
+    repo_type = cfg.get("type", "")
 
-    fields_to_check = REQUIRED_FIELDS.get(repo_type, REQUIRED_FIELDS['default'])
+    fields_to_check = REQUIRED_FIELDS.get(repo_type, REQUIRED_FIELDS["default"])
     for field in fields_to_check:
         if field not in cfg:
             errors.append(f"Missing required field '{field}' in repo '{name}'")
 
-    if 'depends' in cfg:
-        deps = cfg['depends'] if isinstance(cfg['depends'], list) else []
+    if "depends" in cfg:
+        deps = cfg["depends"] if isinstance(cfg["depends"], list) else []
         for dep in deps:
             if dep not in all_repo_names:
                 errors.append(f"Repo '{name}' depends on non-existent repo '{dep}'")
@@ -69,7 +71,7 @@ def detect_circular_refs(raw_configs: dict) -> Optional[str]:
             if current not in raw_configs:
                 break
             visited.append(current)
-            current = raw_configs[current].get('ref')
+            current = raw_configs[current].get("ref")
             if not current:
                 break
     return None
@@ -80,26 +82,28 @@ def resolve_ref(cfg: dict, raw_configs: dict) -> dict:
     Resolve 'ref' field by merging parent config into current.
     Returns resolved config dict.
     """
-    if 'ref' not in cfg:
+    if "ref" not in cfg:
         return cfg.copy()
 
     visited = []
     current = cfg.copy()
-    resolving_name = cfg.get('name', '<unnamed>')
+    resolving_name = cfg.get("name", "<unnamed>")
 
-    while 'ref' in current:
-        ref_name = current['ref']
+    while "ref" in current:
+        ref_name = current["ref"]
 
         if ref_name in visited:
             cycle_path = " -> ".join([resolving_name] + visited + [ref_name])
             raise ConfigError(f"Circular reference detected: {cycle_path}")
 
         if ref_name not in raw_configs:
-            raise ConfigError(f"Reference '{ref_name}' not found for '{resolving_name}'")
+            raise ConfigError(
+                f"Reference '{ref_name}' not found for '{resolving_name}'"
+            )
 
         parent_base = raw_configs[ref_name].copy()
         child_overrides = current.copy()
-        del child_overrides['ref']
+        del child_overrides["ref"]
 
         parent_base.update(child_overrides)
         current = parent_base
@@ -126,19 +130,26 @@ def load_repo_config(config_path: Path) -> tuple[list[dict], dict]:
     cp.read(config_path)
 
     global_cfg = {}
-    if 'una' in cp.sections():
-        global_cfg = dict(cp['una'])
-        cp.remove_section('una')
+    if "una" in cp.sections():
+        global_cfg = dict(cp["una"])
+        cp.remove_section("una")
 
     raw_configs = {}
     for section in cp.sections():
         raw_configs[section] = dict(cp[section])
 
     repo_files = []
-    if 'repos' in global_cfg:
-        repo_files = [r.strip() for r in global_cfg['repos'].replace('\\', ' ').split() if r.strip()]
+    if "repos" in global_cfg:
+        repo_files = [
+            r.strip()
+            for r in global_cfg["repos"].replace("\\", " ").split()
+            if r.strip()
+        ]
     else:
-        repo_files = [str(p.relative_to(BASE_DIR)) for p in (BASE_DIR / "confs" / "repos").glob("*.repo")]
+        repo_files = [
+            str(p.relative_to(BASE_DIR))
+            for p in (BASE_DIR / "confs" / "repos").glob("*.repo")
+        ]
 
     for r_file in repo_files:
         r_path = BASE_DIR / r_file
@@ -157,38 +168,42 @@ def load_repo_config(config_path: Path) -> tuple[list[dict], dict]:
     final_repos = []
     for name in raw_configs:
         config = resolve_ref(raw_configs[name], raw_configs)
-        config['name'] = name
+        config["name"] = name
 
-        if 'sparse_ignore_dirs' in config:
-            config['sparse_ignore_dirs'] = [s.strip() for s in config['sparse_ignore_dirs'].split(',') if s.strip()]
+        if "sparse_ignore_dirs" in config:
+            config["sparse_ignore_dirs"] = [
+                s.strip() for s in config["sparse_ignore_dirs"].split(",") if s.strip()
+            ]
         else:
-            config['sparse_ignore_dirs'] = []
+            config["sparse_ignore_dirs"] = []
 
-        if 'repo_dir' in config:
-            rd = Path(config['repo_dir'])
+        if "repo_dir" in config:
+            rd = Path(config["repo_dir"])
             if not rd.is_absolute():
-                config['repo_dir'] = BASE_DIR / rd
+                config["repo_dir"] = BASE_DIR / rd
             else:
-                config['repo_dir'] = rd
+                config["repo_dir"] = rd
 
         kimg = {}
         for key in list(config.keys()):
-            if key.startswith('kernel_image.'):
-                arch = key.split('.', 1)[1]
+            if key.startswith("kernel_image."):
+                arch = key.split(".", 1)[1]
                 kimg[arch] = config[key]
                 del config[key]
         if kimg:
-            config['kernel_image'] = kimg
+            config["kernel_image"] = kimg
 
         final_repos.append(config)
 
     for cfg in final_repos:
-        if 'depends' in cfg:
-            cfg['depends'] = [s.strip() for s in cfg['depends'].replace(',', ' ').split() if s.strip()]
+        if "depends" in cfg:
+            cfg["depends"] = [
+                s.strip() for s in cfg["depends"].replace(",", " ").split() if s.strip()
+            ]
         else:
-            cfg['depends'] = []
+            cfg["depends"] = []
 
-    all_repo_names = {r['name'] for r in final_repos}
+    all_repo_names = {r["name"] for r in final_repos}
     for cfg in final_repos:
         errors = validate_repo_config(cfg, all_repo_names, set())
         for err in errors:
@@ -199,7 +214,7 @@ def load_repo_config(config_path: Path) -> tuple[list[dict], dict]:
     seen_names = set()
     duplicates = []
     for cfg in final_repos:
-        name = cfg['name']
+        name = cfg["name"]
         if name in seen_names:
             duplicates.append(name)
         seen_names.add(name)
@@ -219,7 +234,7 @@ def deduplicate_repos(repos_config: list) -> list:
     for r in repos_config:
         if r.get("is_virtual"):
             deduped.append(r)
-        elif 'repo_dir' not in r:
+        elif "repo_dir" not in r:
             deduped.append(r)
         else:
             abs_dir = Path(r["repo_dir"]).absolute()
@@ -238,8 +253,8 @@ def filter_by_requested(repos_config: list, requested: set) -> list:
     if not requested:
         return repos_config
 
-    names = {r['name'] for r in repos_config}
-    name_map = {r['name']: r for r in repos_config}
+    names = {r["name"] for r in repos_config}
+    name_map = {r["name"]: r for r in repos_config}
 
     needed = set()
 
@@ -250,13 +265,13 @@ def filter_by_requested(repos_config: list, requested: set) -> list:
         if name in names:
             needed.add(name)
             cfg = name_map.get(name, {})
-            for dep in cfg.get('depends', []):
+            for dep in cfg.get("depends", []):
                 get_needed(dep, visited)
 
     for name in requested:
         get_needed(name, set())
 
-    return [r for r in repos_config if r['name'] in needed]
+    return [r for r in repos_config if r["name"] in needed]
 
 
 def load_repo_state(config_path: Path):
