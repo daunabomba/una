@@ -4,22 +4,23 @@ import argparse
 import shutil
 import os
 import sys
-import configparser
 import json
+import subprocess
 from pathlib import Path
-import contextlib
-import io
 import threading
 import select
 
-# Add the script's directory to sys.path so 'mods' can be imported from anywhere
 BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-from mods.utils import init_or_reset_repo, rebase_and_push, save_and_push, get_target_triple, get_arch_flags, TqdmProgress, get_remote_head
+from mods.utils import init_or_reset_repo, get_target_triple, get_arch_flags, TqdmProgress
 from mods.snapshot import take_snapshot, compare_snapshots, write_report, get_report_paths
 from mods import colors
+from mods.config import set_base_dir, load_repo_config, scan_repos, save_repo_state, deduplicate_repos, filter_by_requested, ConfigError
+from mods.deps import get_build_order, get_keep_dirs, filter_repos_for_build, filter_repos_for_sync
+from mods.git_ops import sync_repo, handle_repos, handle_top_level_repo, print_top_level_status
+from mods.emulation import get_qemu_command, add_test_disk, get_console_args, run_qemu
 
 skel_dir = BASE_DIR / "skel"
 
@@ -357,169 +358,6 @@ def propagate_skel(staging_dir, target_dir):
             f"{skel_dir}/.", str(dest)
         ], check=True)
 
-def save_repo_state(cfg: dict):
-    """Saves the repository configuration to its directory for scanning."""
-    repo_dir = Path(cfg["repo_dir"])
-    if not repo_dir.exists():
-        return
-    
-    state_file = repo_dir / ".una_config"
-    # Convert Path objects to strings for JSON
-    serializable = cfg.copy()
-    serializable["repo_dir"] = str(cfg["repo_dir"])
-    
-    with open(state_file, "w") as f:
-        json.dump(serializable, f, indent=4)
-
-def load_repo_config(config_path: Path):
-    cp = configparser.ConfigParser()
-    if not config_path.exists():
-        colors.error(f"Error: Config file {config_path} not found.")
-        sys.exit(1)
-        
-    cp.read(config_path)
-    
-    global_cfg = {}
-    if 'una' in cp.sections():
-        global_cfg = dict(cp['una'])
-        cp.remove_section('una')
-    
-    raw_configs = {}
-    for section in cp.sections():
-        raw_configs[section] = dict(cp[section])
-
-    component_list = []
-    if 'components' in global_cfg:
-        component_list = [c.strip() for c in global_cfg['components'].replace(',', ' ').split() if c.strip()]
-
-    requested_repos = set(component_list)
-    
-    repo_files = []
-    if 'repos' in global_cfg:
-        repo_files = [r.strip() for r in global_cfg['repos'].replace('\\', ' ').split() if r.strip()]
-    else:
-        repo_files = [str(p.relative_to(BASE_DIR)) for p in (BASE_DIR / "confs" / "repos").glob("*.repo")]
-        
-    for r_file in repo_files:
-        r_path = BASE_DIR / r_file
-        if r_path.exists():
-            rcp = configparser.ConfigParser()
-            rcp.read(r_path)
-            for section in rcp.sections():
-                raw_configs[section] = dict(rcp[section])
-        else:
-            colors.warn(f"Warning: Repo config {r_path} not found.")
-    
-    final_repos = []
-    for name in raw_configs:
-        # Resolve references to get a flat dict of strings first
-        visited = set()
-        current_cfg = raw_configs[name].copy()
-        resolving_name = name
-        
-        while 'ref' in current_cfg:
-            ref_name = current_cfg['ref']
-            if ref_name in visited:
-                colors.error(f"Error: Circular reference detected for repo {name}")
-                sys.exit(1)
-            if ref_name not in raw_configs:
-                colors.error(f"Error: Reference {ref_name} not found for {resolving_name}")
-                sys.exit(1)
-            
-            # Combine parent into current (parent provides defaults, current overrides)
-            parent_base = raw_configs[ref_name].copy()
-            child_overrides = current_cfg.copy()
-            del child_overrides['ref']
-            
-            parent_base.update(child_overrides)
-            current_cfg = parent_base
-            visited.add(ref_name)
-        
-        config = current_cfg
-        config['name'] = name
-        
-        if 'sparse_ignore_dirs' in config:
-            config['sparse_ignore_dirs'] = [s.strip() for s in config['sparse_ignore_dirs'].split(',') if s.strip()]
-        else:
-            config['sparse_ignore_dirs'] = []
-            
-        if 'repo_dir' in config:
-            rd = Path(config['repo_dir'])
-            if not rd.is_absolute():
-                config['repo_dir'] = BASE_DIR / rd
-            else:
-                config['repo_dir'] = rd
-        
-        kimg = {}
-        for key in list(config.keys()):
-            if key.startswith('kernel_image.'):
-                arch = key.split('.', 1)[1]
-                kimg[arch] = config[key]
-                del config[key]
-        if kimg:
-            config['kernel_image'] = kimg
-        
-        final_repos.append(config)
-    
-    # Convert depends to list BEFORE dependency resolution
-    for cfg in final_repos:
-        if 'depends' in cfg:
-            cfg['depends'] = [s.strip() for s in cfg['depends'].replace(',', ' ').split() if s.strip()]
-        else:
-            cfg['depends'] = []
-
-    if requested_repos:
-        final_repos_names = {r['name'] for r in final_repos}
-        final_repos_map = {r['name']: r for r in final_repos}
-        
-        needed = set()
-        def get_needed(name, visited=None):
-            if visited is None:
-                visited = set()
-            if name in visited:
-                return
-            visited.add(name)
-            if name in final_repos_names:
-                needed.add(name)
-                cfg = final_repos_map.get(name, {})
-                for dep in cfg.get('depends', []):
-                    get_needed(dep, visited)
-                if 'ref' in cfg:
-                    get_needed(cfg['ref'], visited)
-        
-        for name in requested_repos:
-            get_needed(name)
-        
-        final_repos = [r for r in final_repos if r['name'] in needed]
-    
-    for cfg in final_repos:
-        cfg["is_virtual"] = cfg.get("type") == "virtual"
-
-    return final_repos, global_cfg
-
-def scan_repos():
-    """Scans the repo/ directory for existing repositories and their states."""
-    repo_base = BASE_DIR / "repo"
-    if not repo_base.exists():
-        return []
-    
-    scanned = []
-    for d in repo_base.iterdir():
-        if d.is_dir():
-            state_file = d / ".una_config"
-            if state_file.exists():
-                try:
-                    with open(state_file, "r") as f:
-                        cfg = json.load(f)
-                        rd = Path(cfg["repo_dir"])
-                        if not rd.is_absolute():
-                            cfg["repo_dir"] = BASE_DIR / rd
-                        else:
-                            cfg["repo_dir"] = rd
-                        scanned.append(cfg)
-                except Exception as e:
-                    print(f"Warning: Failed to load state for {d}: {e}")
-    return scanned
 
 def remove_repo(name, repos, arches, bld_base):
     """Removes a repository from the list, cleans build outputs and deletes repo dir."""
@@ -654,7 +492,9 @@ def main():
 
     repos_config = []
     global_cfg = {}
-    
+
+    set_base_dir(BASE_DIR)
+
     for conf_file in conf_files:
         conf_path = BASE_DIR / conf_file
         if not conf_path.exists():
@@ -678,204 +518,56 @@ def main():
     if not arches:
         arches = ["x32"]
     
-    # NOTE: Cleanup moved to after dependency loading
+    # Deduplicate repos_config
+    repos_config = deduplicate_repos(repos_config)
+    for cfg in repos_config:
+        cfg["is_virtual"] = cfg.get("type") == "virtual"
 
-    # Deduplicate repos_config by absolute repo_dir path (keeping first occurrence)
-    # BUT: Don't deduplicate repos that have 'ref' attribute (they reference parent configs)
-    # Use (repo_dir, una_file) as key to allow different phases of same repo (e.g., linux-headers vs linux-image)
-    seen_dirs = set()
-    deduped_repos_config = []
-    for r in repos_config:
-        if r.get("is_virtual"):
-            deduped_repos_config.append(r)
-        elif 'repo_dir' not in r:
-            # Skip repos without repo_dir (shouldn't happen after config loading)
-            deduped_repos_config.append(r)
-        else:
-            abs_dir = Path(r["repo_dir"]).absolute()
-            # Use (repo_dir, una_file) as key to distinguish different build phases
-            # This allows linux-headers and linux-image (both in repo/kernel) to coexist
-            dir_file_key = (abs_dir, r.get("una_file", "una.py"))
-            if dir_file_key not in seen_dirs:
-                deduped_repos_config.append(r)
-                seen_dirs.add(dir_file_key)
-    
-    if len(deduped_repos_config) < len(repos_config):
-        colors.info(f"Deduplicated {len(repos_config) - len(deduped_repos_config)} duplicate repo entries")
-    repos_config = deduped_repos_config
-
-    # Automatic Sync/Init for repos
     una_base = get_git_remote_base()
-    
-    # Build repos list (non-virtual only) for dependency analysis
-    repos = []
-    for r in repos_config:
-        # Ensure is_virtual is set
-        if "is_virtual" not in r:
-            r["is_virtual"] = r.get("type") == "virtual"
-        if r.get("is_virtual"):
-            continue
-        config = r.copy()
-        # Merge behavior driven by config if merge is enabled
+
+    repos = filter_repos_for_sync(repos_config)
+    for r in repos:
         if una_base:
             base = una_base
             if not base.endswith("/") and not base.endswith(":"):
                 base += "/"
-            config["una_url"] = f"{base}{r['una_repo']}"
+            r["una_url"] = f"{base}{r['una_repo']}"
         else:
-            config["una_url"] = "UNKNOWN_BASE" 
-        repos.append(config)
+            r["una_url"] = "UNKNOWN_BASE"
 
     build_all = False
-
     if args.build is not None and len(args.build) == 0:
         if 'components' in global_cfg:
             args.build = [c.strip() for c in global_cfg['components'].replace(',', ' ').split() if c.strip()]
         else:
             build_all = True
 
-    import graphlib
-    dep_graph = {r["name"]: r.get("depends", []) for r in repos}
+    config_components = set()
+    if 'components' in global_cfg:
+        config_components = {c.strip() for c in global_cfg['components'].replace(',', ' ').split() if c.strip()}
 
     if args.build is not None and not build_all:
         required_names = set(args.build)
     else:
-        required_names = set(dep_graph.keys())
+        required_names = {r['name'] for r in repos_config}
+
+    filtered_repos = filter_by_requested(repos_config, required_names)
+
+    try:
+        build_order, dep_graph = get_build_order(filtered_repos, required_names)
+    except ConfigError as e:
+        colors.error(f"Dependency error: {e}")
+        sys.exit(1)
+
+    keep_repo_dirs = get_keep_dirs(repos_config, dep_graph, config_components)
     
-    # Build dependency graph using BFS to discover all required repos
-    dep_graph = {}
-    queue = list(required_names)
-    
-    while queue:
-        name = queue.pop(0)
-        
-        # Skip if we've already processed this repo
-        if name in dep_graph:
-            continue
-            
-        # Load the repo config
-        repo_file = BASE_DIR / "confs" / "repos" / f"{name}.repo"
-        if not repo_file.exists():
-            colors.warn(f"Warning: Repo config for {name} not found.")
-            dep_graph[name] = []  # No dependencies
-            continue
-            
-        rcp = configparser.ConfigParser()
-        rcp.read(repo_file)
-        # Take the first section (should be only one)
-        section = rcp.sections()[0] if rcp.sections() else name
-        cfg = dict(rcp[section])
-        cfg['name'] = name
-        repos_config.append(cfg)
-        
-        # Check if virtual
-        is_virtual = cfg.get("is_virtual", False) or cfg.get("type") == "virtual"
-        
-        # Add to repos list for syncing if not virtual
-        if not is_virtual:
-            if una_base:
-                base = una_base or "UNKNOWN_BASE"
-                if not base.endswith("/") and not base.endswith(":"):
-                    base += "/"
-                cfg["una_url"] = f"{base}{cfg.get('una_repo', '')}"
-            repos.append(cfg)
-        
-        # Get dependencies
-        dep_string = cfg.get("depends", "")
-        if dep_string:
-            deps = [d.strip() for d in dep_string.replace(",", " ").split() if d.strip()]
-        else:
-            deps = []
-        
-        dep_graph[name] = deps
-        
-        # Add dependencies to queue for processing
-        for dep in deps:
-            if dep not in dep_graph:
-                queue.append(dep)
-                required_names.add(dep)
-    
-    # Build final pruned_graph (only include repos we actually loaded)
-    pruned_graph = {k: v for k, v in dep_graph.items() if k in required_names}
-    
-    # Build set of repo directory paths to KEEP based on config file components
-    # This keeps ALL repos referenced by the config, not just what's being built
-    keep_repo_dirs = set()
-    
-    # Get all components from the config file
-    config_components = set()
-    if 'components' in global_cfg:
-        config_components = {c.strip() for c in global_cfg['components'].replace(',', ' ').split() if c.strip()}
-    
-    # Map component names to their repo_dir paths
-    for r in repos_config:
-        if r["name"] in config_components and "repo_dir" in r:
-            keep_repo_dirs.add(Path(r["repo_dir"]).absolute())
-    
-    # Also keep all dependencies of config components
-    def add_deps(name, visited=None):
-        if visited is None:
-            visited = set()
-        if name in visited:
-            return
-        visited.add(name)
-        for dep in dep_graph.get(name, []):
-            dep_repo = next((r for r in repos_config if r["name"] == dep), None)
-            if dep_repo and "repo_dir" in dep_repo:
-                keep_repo_dirs.add(Path(dep_repo["repo_dir"]).absolute())
-            add_deps(dep, visited)
-    
-    for comp in config_components:
-        add_deps(comp)
-    
-    # Also keep tools repos (build-tools, llvm, etc.)
-    for r in repos_config:
-        if r.get("type") == "tools" and "repo_dir" in r:
-            keep_repo_dirs.add(Path(r["repo_dir"]).absolute())
-    
-    # Sync/Init for repos - only sync repos in the required dependency set
     for cfg in repos_config:
-        # Skip virtual aliases
-        if cfg.get("is_virtual"):
+        if cfg.get("is_virtual") or cfg["name"] not in required_names:
             continue
-        
-        # Only sync repos that are needed for build or active operations
-        if cfg["name"] not in required_names:
-            continue
-            
         if 'repo_dir' not in cfg:
             continue
-            
-        repo_dir = Path(cfg["repo_dir"])
-            
-        # We ALWAYS want to ensure remotes are correctly configured (URLs, refspecs)
-        # but we only want to perform a destructive RESET if the repo is missing.
-        needs_reset = not repo_dir.exists()
-        
-        if needs_reset:
-            if not una_base:
-                colors.warn(f"Warning: New repository '{cfg['name']}' found in config but 'una' base URL is unknown. "
-                      "Please ensure the top-level repository has a remote named 'una' (e.g., git remote rename origin una). "
-                      "Skipping initialization.")
-                continue
-            colors.info(f"New repository '{cfg['name']}' detected. Initializing...")
-        
-        base = una_base or "UNKNOWN_BASE"
-        if not base.endswith("/") and not base.endswith(":"):
-            base += "/"
-        una_url = f"{base}{cfg['una_repo']}"
-        
-        has_origin = "origin_url" in cfg
-        init_or_reset_repo(
-            repo_dir=repo_dir, 
-            origin_url=cfg.get("origin_url"), 
-            una_url=una_url, 
-            sparse_ignore_dirs=cfg.get("sparse_ignore_dirs", []),
-            with_origin=has_origin,
-            reset=needs_reset,
-            tag=cfg.get("tag")
-        )
-        if needs_reset:
+
+        if sync_repo(cfg, una_base):
             save_repo_state(cfg)
 
     # Cleanup AFTER sync - remove repos not in current config
@@ -897,18 +589,11 @@ def main():
                 colors.warn(f"Repository '{d.name}' exists in repo/ but not required by config. Removing...")
                 shutil.rmtree(d, ignore_errors=True)
 
-    try:
-        ts = graphlib.TopologicalSorter(pruned_graph)
-        build_order = list(ts.static_order())
-    except graphlib.CycleError as e:
-        colors.error(f"Error: Circular dependency detected: {e}")
-        sys.exit(1)
-
     repos_to_process = []
+    repos_by_name = {r["name"]: r for r in repos}
     for name in build_order:
-        repo = next((r for r in repos if r["name"] == name), None)
-        if repo:
-            repos_to_process.append(repo)
+        if name in repos_by_name:
+            repos_to_process.append(repos_by_name[name])
 
     # Check if repos exist before building or rebasing
     if (args.build is not None or args.rebase):
@@ -925,28 +610,8 @@ def main():
         return
 
     if args.status:
-        import subprocess
-        print("=== Top-level Repository (una) ===")
-        subprocess.run(["git", "status", "-sb"], cwd=BASE_DIR)
-        
-        processed_dirs = set()
-        for r in repos:
-            # Skip virtual components that don't have repo_dir
-            if r.get("is_virtual") or r.get("type") == "virtual" or "repo_dir" not in r:
-                continue
-            r_path = Path(r["repo_dir"]).absolute()
-            if r_path in processed_dirs:
-                continue
-            
-            # Identify if it's a git repo
-            if r_path.exists() and (r_path / ".git").exists():
-                print(f"\n=== Repository: {r['name']} ({r['repo_dir']}) ===")
-                subprocess.run(["git", "status", "-sb"], cwd=r_path)
-            elif r_path.exists():
-                print(f"\n=== Repository: {r['name']} ({r['repo_dir']}) [Not a Git Repo] ===")
-            else:
-                print(f"\n=== Repository: {r['name']} ({r['repo_dir']}) [MISSING] ===")
-            processed_dirs.add(r_path)
+        print_top_level_status(BASE_DIR)
+        handle_repos(repos, "status")
 
 
     if args.build is not None or build_all:
@@ -1231,7 +896,9 @@ def main():
                              dest_init_list = bld_base / f"{kernel_name}.initfilelist.txt"
                              colors.info(f"[{arch}] Copying initfilelist {init_list_path} to {dest_init_list}")
                              shutil.copy(init_list_path, dest_init_list)
-                         
+                         else:
+                            colors.error(f"[{arch}] Cannot copy {init_list_path}")
+                            sys.exit(1)
                          # Sync back updated config to source
                          src_config = Path(r["repo_dir"]) / ".config"
                          if src_config.exists():
@@ -1273,185 +940,47 @@ def main():
         if not proj:
             print(f"Error: Component '{target_name}' not found.")
             sys.exit(1)
-        
+
         if len(arches) > 1:
             print("Error: --run only supports one architecture at a time.")
             sys.exit(1)
-        
+
         arch = arches[0]
         print(f"\n--- Run Stage: {target_name} ({arch}) ---")
-        
+
         kernel_name = global_cfg.get("kernel_name", "kernel")
         kernel_img = bld_base / kernel_name
         if not kernel_img.exists():
             print(f"Error: Kernel image not found at {kernel_img}. Please build it first with --build {target_name}.")
             sys.exit(1)
 
-        import subprocess
-        qemu_cmd = {
-            "x32": [
-                "qemu-system-x86_64", "-enable-kvm", "-no-reboot", "-m", "1G", "-machine", "q35", "-cpu", "host",
-                "-drive", "if=pflash,format=raw,readonly=on,file=/etc/bios/OVMF.fd",
-                "-serial", "mon:stdio",
-                "-netdev", "user,id=vmnic,restrict=n,hostfwd=tcp::2022-:22", "-device", "virtio-net-pci,romfile=,netdev=vmnic",
-                "-nodefaults", "-nographic",
-                "-kernel", str(kernel_img), "-append", "console=ttyS0"
-            ],
-            "x86_64": [
-                "qemu-system-x86_64", "-enable-kvm", "-no-reboot", "-m", "1G", "-machine", "q35", "-cpu", "host",
-                "-drive", "if=pflash,format=raw,readonly=on,file=/etc/bios/OVMF.fd",
-                "-serial", "mon:stdio",
-                "-netdev", "user,id=vmnic,restrict=n", "-device", "virtio-net-pci,romfile=,netdev=vmnic",
-                "-nodefaults", "-nographic",
-                "-kernel", str(kernel_img), "-append", "console=ttyS0"
-            ],
-            "aarch64": [
-                "qemu-system-aarch64", "-no-reboot", "-M", "virt", "-cpu", "cortex-a53", "-m", "1G",
-                "-serial", "mon:stdio",
-                "-netdev", "user,id=vmnic,restrict=n", "-device", "virtio-net-pci,romfile=,netdev=vmnic",
-                "-nodefaults", "-nographic",
-                "-kernel", str(kernel_img), "-append", "console=ttyAMA0"
-            ],
-            "riscv64": [
-                "qemu-system-riscv64", "-no-reboot", "-M", "virt", "-m", "1G",
-                "-serial", "mon:stdio",
-                "-netdev", "user,id=vmnic,restrict=n", "-device", "virtio-net-pci,romfile=,netdev=vmnic",
-                "-nodefaults", "-nographic",
-                "-kernel", str(kernel_img), "-append", "console=ttyS0"
-            ]
-        }
-
-        cmd = qemu_cmd.get(arch)
-        if not cmd:
-            print(f"Error: No run configuration for architecture: {arch}")
+        try:
+            cmd = get_qemu_command(arch, kernel_img, get_console_args(arch))
+        except ValueError as e:
+            print(f"Error: {e}")
             sys.exit(1)
 
-        test_disk = bld_base / "test.img"
-        if test_disk.exists():
-            print(f"Adding test disk {test_disk} to QEMU...")
-            cmd += ["-drive", f"file={test_disk},format=raw,if=virtio"]
+        cmd = add_test_disk(cmd, bld_base / "test.img")
 
-        print(f"Executing: {' '.join(cmd)}")
         try:
-            subprocess.run(cmd, check=True)
+            run_qemu(cmd)
         except KeyboardInterrupt:
             print("\nKernel execution stopped by user.")
-        except Exception as e:
-            print(f"Error during kernel execution: {e}")
             sys.exit(1)
 
     tag = args.save
     if tag or args.rebase:
-        from git import Repo
-        processed_dirs = set()
+        action = "save" if tag else "rebase"
+        if tag or args.rebase == "ALL" or args.rebase == "una":
+            handle_top_level_repo(BASE_DIR, action, tag, squash=True)
 
-        # Handle top-level repository
-        top_repo_path = BASE_DIR
-        if top_repo_path not in processed_dirs:
-            # Only rebase top-level if we are doing ALL or if explicitly named "una"
-            # or if we are doing a global --save (tag is set)
-            if tag or args.rebase == "ALL" or args.rebase == "una":
-                print(f"\n--- Top-level Repository (una) ---")
-                top_repo = Repo(top_repo_path)
-                # Fetch from 'una' remote
-                print("Fetching from 'una'...")
-                top_repo.remotes.una.fetch(progress=TqdmProgress())
-                
-                # For top-level, we assume 'una' branch rebasing onto 'una/una'
-                target_branch = "una/una" 
-                if tag:
-                    save_and_push(top_repo, target_branch, tag, remote_name="una")
-                elif args.rebase:
-                    rebase_and_push(top_repo, target_branch, remote_name="una", squash=True)
-                processed_dirs.add(top_repo_path)
-
-        # Handle sub-repositories
-        for cfg in repos_to_process:
-            # Only rebase if we are doing ALL or if this repo matches the name
-            # or if we are doing a global --save (tag is set)
-            if not (tag or args.rebase == "ALL" or args.rebase == cfg["name"]):
-                continue
-
-            r_path = Path(cfg["repo_dir"]).absolute()
-            if r_path in processed_dirs: continue
-            
-            print(f"\n--- Repository: {cfg['name']} ({cfg['repo_dir']}) ---")
-            repo = Repo(r_path)
-            remote_prefix = "origin" if "origin_url" in cfg else "una"
-            
-            # Automatic fetch before rebase/tag
-            print(f"Fetching from {remote_prefix}...")
-            repo.remotes[remote_prefix].fetch(progress=TqdmProgress())
-            if remote_prefix == "origin" and "una" in repo.remotes:
-                print("Also fetching from una...")
-                repo.remotes.una.fetch(progress=TqdmProgress())
-            
-            if remote_prefix == "una":
-                target_branch = "una/una"
-            else:
-                # Target selection for rebase/save:
-                # 1. Explicitly configured branch override
-                # 2. Configured version tag (pins the rebase to a specific release)
-                # 3. Discovery of the remote HEAD (master/main)
-                branch = cfg.get("branch")
-                tag_name = cfg.get("tag")
-                
-                if branch:
-                    target_branch = f"{remote_prefix}/{branch}"
-                elif tag_name:
-                    target_branch = tag_name
-                else:
-                    target_branch = f"{remote_prefix}/{get_remote_head(repo, remote_prefix)}"
-            
-            if tag:
-                save_and_push(repo, target_branch, tag)
-            elif args.rebase:
-                rebase_and_push(repo, target_branch, squash = True, tag = cfg.get("tag"))
-            processed_dirs.add(r_path)
+        repos_for_op = [r for r in repos_to_process
+                       if tag or args.rebase == "ALL" or args.rebase == r["name"]]
+        handle_repos(repos_for_op, action, tag, include_all=False)
 
     if args.checkout:
-        from git import Repo
-        tag_to_checkout = args.checkout
-        processed_dirs = set()
-
-        # Handle top-level repository
-        top_repo_path = BASE_DIR
-        if top_repo_path not in processed_dirs:
-            print(f"\n--- Top-level Repository (una) ---")
-            top_repo = Repo(top_repo_path)
-            print(f"Fetching tags for top-level repo...")
-            top_repo.remotes.una.fetch(tags=True)
-            
-            # Automatic fetch before rebase/tag or on explicit request
-            if tag_to_checkout or args.rebase:
-                print(f"Fetching from una...")
-                top_repo.remotes.una.fetch(progress=TqdmProgress())
-
-            if args.rebase:
-                rebase_and_push(top_repo, "una/una", remote_name="una", squash=True)
-            elif tag_to_checkout:
-                print(f"Checking out tag '{tag_to_checkout}'...")
-                try:
-                    top_repo.git.checkout(tag_to_checkout)
-                except Exception as e:
-                    print(f"Error checking out tag '{tag_to_checkout}' in top-level repo: {e}")
-            processed_dirs.add(top_repo_path)
-
-        # Handle sub-repositories
-        for cfg in repos_to_process:
-            r_path = Path(cfg["repo_dir"]).absolute()
-            if r_path in processed_dirs: continue
-            
-            print(f"\n--- Repository: {cfg['name']} ({cfg['repo_dir']}) ---")
-            repo = Repo(r_path)
-            print(f"Fetching tags...")
-            repo.remotes.una.fetch(tags=True)
-            print(f"Checking out tag '{tag_to_checkout}'...")
-            try:
-                repo.git.checkout(tag_to_checkout)
-            except Exception as e:
-                print(f"Error checking out tag '{tag_to_checkout}' in {cfg['name']}: {e}")
-            processed_dirs.add(r_path)
+        handle_top_level_repo(BASE_DIR, "checkout", args.checkout, squash=True)
+        handle_repos(repos_to_process, "checkout", args.checkout)
 
     if args.clean:
         print("\n=== Global Cleanup ===")
