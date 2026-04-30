@@ -9,24 +9,65 @@ import subprocess
 from pathlib import Path
 import threading
 import select
+import graphlib
 
 BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-from mods.utils import init_or_reset_repo, get_target_triple, get_arch_flags, TqdmProgress
-from mods.snapshot import take_snapshot, compare_snapshots, write_report, get_report_paths
+from mods.utils import (
+    init_or_reset_repo,
+    get_target_triple,
+    get_arch_flags,
+    TqdmProgress,
+)
+from mods.snapshot import (
+    take_snapshot,
+    compare_snapshots,
+    write_report,
+    get_report_paths,
+)
 from mods import colors
-from mods.config import set_base_dir, load_repo_config, scan_repos, save_repo_state, deduplicate_repos, filter_by_requested, ConfigError
-from mods.deps import get_build_order, get_keep_dirs, filter_repos_for_build, filter_repos_for_sync
-from mods.git_ops import sync_repo, handle_repos, handle_top_level_repo, print_top_level_status
-from mods.trace import init_trace, is_enabled, repo_created, repo_removed, repo_synced, build_step_start, build_step_end, tools_step_start, tools_step_end, trace_deps
+from mods.config import (
+    set_base_dir,
+    load_repo_config,
+    scan_repos,
+    save_repo_state,
+    deduplicate_repos,
+    filter_by_requested,
+    ConfigError,
+)
+from mods.deps import (
+    get_build_order,
+    get_keep_dirs,
+    filter_repos_for_build,
+    filter_repos_for_sync,
+)
+from mods.git_ops import (
+    sync_repo,
+    handle_repos,
+    handle_top_level_repo,
+    print_top_level_status,
+)
+from mods.trace import (
+    init_trace,
+    is_enabled,
+    repo_created,
+    repo_removed,
+    repo_synced,
+    build_step_start,
+    build_step_end,
+    tools_step_start,
+    tools_step_end,
+    trace_deps,
+)
 from mods.emulation import get_qemu_command, add_test_disk, get_console_args, run_qemu
 
 skel_dir = BASE_DIR / "skel"
 
 try:
     import curses
+
     CURSES_OK = True
 except ImportError:
     CURSES_OK = False
@@ -41,13 +82,17 @@ def load_repo_una(repo_dir: str, una_file_name: str = "una.py"):
     """
     una_file = Path(repo_dir) / una_file_name
     if not una_file.exists():
-        colors.error(f"Error: {una_file} not found. Build script is missing for this component.")
+        colors.error(
+            f"Error: {una_file} not found. Build script is missing for this component."
+        )
         sys.exit(1)
-    
+
     # Create a unique module name based on repo name and script name
-    unique_id = f"{Path(repo_dir).name}_{una_file_name.replace('/', '_').replace('.', '_')}"
+    unique_id = (
+        f"{Path(repo_dir).name}_{una_file_name.replace('/', '_').replace('.', '_')}"
+    )
     module_name = f"repo_una_{unique_id}"
-    
+
     spec = importlib.util.spec_from_file_location(module_name, una_file)
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
@@ -61,7 +106,7 @@ class StepRunner:
         self.staging_dir = staging_dir
         self.target_dir = target_dir
         self.bld_base = bld_base
-        self.component_snapshots = {} # name -> {staging: {}, target: {}}
+        self.component_snapshots = {}  # name -> {staging: {}, target: {}}
         self.cleaned_components = set()
         # Create build_logs directory at same level as report
         self.build_logs_dir = self.bld_base / self.arch / "build_logs"
@@ -72,12 +117,14 @@ class StepRunner:
         colors.info(f"[{self.arch}] Running {name}::{step_name}...")
         if is_enabled():
             build_step_start(self.arch, name, step_name)
-        
+
         # 1. Cleanup and Pre-snapshot on first call for this component
         if name not in self.cleaned_components:
             report_file = self.bld_base / self.arch / "report" / f"{name}.txt"
             if report_file.exists():
-                colors.info(f"[{self.arch}] Cleaning up previous build outputs for {name}...")
+                colors.info(
+                    f"[{self.arch}] Cleaning up previous build outputs for {name}..."
+                )
                 paths = get_report_paths(report_file)
                 for p in paths:
                     try:
@@ -87,37 +134,37 @@ class StepRunner:
                             (self.target_dir / p[7:]).unlink(missing_ok=True)
                     except Exception as e:
                         colors.warn(f"[{self.arch}] Warning: Failed to remove {p}: {e}")
-            
+
             self.component_snapshots[name] = {
                 "staging": take_snapshot(self.staging_dir),
-                "target": take_snapshot(self.target_dir)
+                "target": take_snapshot(self.target_dir),
             }
             self.cleaned_components.add(name)
 
         # 2. Execute step with output capturing to log file
         log_file_path = self.build_logs_dir / f"{name}.txt"
         colors.info(f"[{self.arch}] Build log: {log_file_path}")
-        
+
         # Use file descriptor redirection to capture all output (including subprocesses)
         # Save original stdout and stderr file descriptors
         original_stdout_fd = os.dup(1)
         original_stderr_fd = os.dup(2)
-        
+
         # Open log file
         log_file = open(log_file_path, "w")
-        
+
         # Create a pipe for capturing output
         pipe_read, pipe_write = os.pipe()
-        
+
         # Redirect stdout and stderr to the pipe
         os.dup2(pipe_write, 1)
         os.dup2(pipe_write, 2)
-        
+
         # Buffer for output data
         output_buffer = []
         buffer_lock = threading.Lock()
         stop_event = threading.Event()
-        
+
         def reader_thread():
             """Read from pipe and write to terminal and log file."""
             # Use a polling approach for cross-platform compatibility
@@ -131,13 +178,13 @@ class StepRunner:
                             break
                         # Write to original stdout and log file
                         os.write(original_stdout_fd, data)
-                        log_file.write(data.decode('utf-8', errors='replace'))
+                        log_file.write(data.decode("utf-8", errors="replace"))
                         log_file.flush()
                         with buffer_lock:
                             output_buffer.append(data)
                 except (OSError, IOError):
                     break
-            
+
             # Drain remaining data
             try:
                 while True:
@@ -145,39 +192,39 @@ class StepRunner:
                     if not data:
                         break
                     os.write(original_stdout_fd, data)
-                    log_file.write(data.decode('utf-8', errors='replace'))
+                    log_file.write(data.decode("utf-8", errors="replace"))
                     log_file.flush()
                     with buffer_lock:
                         output_buffer.append(data)
             except (OSError, IOError):
                 pass
-        
+
         # Start reader thread
         reader = threading.Thread(target=reader_thread, daemon=True)
         reader.start()
-        
+
         try:
             # Execute the step function
             step_func(self.staging_dir, self.target_dir, **kwargs)
         finally:
             # Stop the reader thread
             stop_event.set()
-            
+
             # Close the write end of the pipe to signal EOF
             os.close(pipe_write)
-            
+
             # Wait for reader thread to finish
             reader.join(timeout=2)
-            
+
             # Restore original file descriptors
             os.dup2(original_stdout_fd, 1)
             os.dup2(original_stderr_fd, 2)
-            
+
             # Close our duplicates
             os.close(original_stdout_fd)
             os.close(original_stderr_fd)
             os.close(pipe_read)
-            
+
             # Close log file
             log_file.close()
 
@@ -185,25 +232,29 @@ class StepRunner:
         pre = self.component_snapshots[name]
         post_staging = take_snapshot(self.staging_dir)
         post_target = take_snapshot(self.target_dir)
-        
+
         added_s, mod_s, del_s = compare_snapshots(pre["staging"], post_staging)
         added_t, mod_t, del_t = compare_snapshots(pre["target"], post_target)
-        
+
         if mod_s or del_s:
-            colors.error(f"[{self.arch}] ERROR: {name} modified or deleted files in staging!")
+            colors.error(
+                f"[{self.arch}] ERROR: {name} modified or deleted files in staging!"
+            )
         if mod_t or del_t:
-            colors.error(f"[{self.arch}] ERROR: {name} modified or deleted files in target!")
-            
+            colors.error(
+                f"[{self.arch}] ERROR: {name} modified or deleted files in target!"
+            )
+
         # Compile combined report
         combined_added = {f"staging/{k}": v for k, v in added_s.items()}
         combined_added.update({f"target/{k}": v for k, v in added_t.items()})
-        
+
         combined_mod = {f"staging/{k}": v for k, v in mod_s.items()}
         combined_mod.update({f"target/{k}": v for k, v in mod_t.items()})
-        
+
         combined_del = {f"staging/{k}": v for k, v in del_s.items()}
         combined_del.update({f"target/{k}": v for k, v in del_t.items()})
-        
+
         report_file = self.bld_base / self.arch / "report" / f"{name}.txt"
         write_report(combined_added, combined_mod, combined_del, report_file)
 
@@ -216,9 +267,12 @@ def is_repo_dirty(repo_path: Path):
     Check if a git repository has any modified or untracked files.
     """
     import subprocess
+
     if not (repo_path / ".git").exists():
         return False
-    result = subprocess.run(["git", "status", "--porcelain"], cwd=repo_path, capture_output=True, text=True)
+    result = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=repo_path, capture_output=True, text=True
+    )
     return len(result.stdout.strip()) > 0
 
 
@@ -232,7 +286,7 @@ def sync_kernel_config(src: Path, dest: Path):
     content = src.read_text()
     lines = content.splitlines()
     out_lines = []
-    
+
     # Skip leading comments and empty lines
     header_done = False
     for line in lines:
@@ -241,13 +295,13 @@ def sync_kernel_config(src: Path, dest: Path):
                 continue
             else:
                 header_done = True
-        
+
         # Process entries
         if line.startswith("CONFIG_CC_VERSION_TEXT="):
             out_lines.append('CONFIG_CC_VERSION_TEXT="clang"')
         else:
             out_lines.append(line)
-            
+
     dest.write_text("\n".join(out_lines) + "\n")
 
 
@@ -257,12 +311,26 @@ def list_repos(repos, target_type=None):
     If target_type is None, prints all.
     """
     if target_type == "target":
-        filtered = [r for r in repos if r.get("type") != "tools" and not r.get("is_virtual") and r.get("type") != "virtual"]
+        filtered = [
+            r
+            for r in repos
+            if r.get("type") != "tools"
+            and not r.get("is_virtual")
+            and r.get("type") != "virtual"
+        ]
     else:
-        filtered = [r for r in repos if (target_type is None or r.get("type") == target_type) and not r.get("is_virtual") and r.get("type") != "virtual"]
+        filtered = [
+            r
+            for r in repos
+            if (target_type is None or r.get("type") == target_type)
+            and not r.get("is_virtual")
+            and r.get("type") != "virtual"
+        ]
     for r in filtered:
         script_info = f" (Script: {r.get('una_file', 'una.py')})"
-        print(f"[{r.get('type', 'unknown')}] {r['name']} -> {r['repo_dir']}{script_info}")
+        print(
+            f"[{r.get('type', 'unknown')}] {r['name']} -> {r['repo_dir']}{script_info}"
+        )
     return [r["name"] for r in filtered]
 
 
@@ -273,13 +341,14 @@ def get_git_remote_base():
     """
     try:
         from git import Repo
+
         # Use the absolute path of the script's directory for more reliable repo discovery
         script_dir = Path(__file__).resolve().parent
         repo = Repo(script_dir, search_parent_directories=True)
-        
+
         # Find the remote named 'una' explicitly
         for r in repo.remotes:
-            if r.name == 'una':
+            if r.name == "una":
                 url = str(r.url)
                 if "/" in url:
                     return url.rsplit("/", 1)[0]
@@ -292,55 +361,90 @@ def create_test_disk(disk_path):
     if disk_path.exists():
         print(f"Test disk {disk_path} already exists. Skipping creation.")
         return
-    
+
     print(f"Creating 1G test disk at {disk_path}...")
     import subprocess
+
     # 1. Create 1G raw image
-    subprocess.run(["qemu-img", "create", "-f", "raw", str(disk_path), "1G"], check=True)
-    
+    subprocess.run(
+        ["qemu-img", "create", "-f", "raw", str(disk_path), "1G"], check=True
+    )
+
     # 2. Partition with sgdisk
     # Alignment=1 to allow sector 3. Table size reduced to 4 entries to fit starting at sector 3.
-    subprocess.run(["sgdisk", "--set-alignment=1", "--resize-table=4", str(disk_path)], check=True)
-    subprocess.run(["sgdisk", "--set-alignment=1", "--new=1:3:65365", str(disk_path)], check=True)
+    subprocess.run(
+        ["sgdisk", "--set-alignment=1", "--resize-table=4", str(disk_path)], check=True
+    )
+    subprocess.run(
+        ["sgdisk", "--set-alignment=1", "--new=1:3:65365", str(disk_path)], check=True
+    )
     subprocess.run(["sgdisk", "--typecode=1:ef00", str(disk_path)], check=True)
-    subprocess.run(["sgdisk", "--set-alignment=1", "--new=2:65536:0", str(disk_path)], check=True)
+    subprocess.run(
+        ["sgdisk", "--set-alignment=1", "--new=2:65536:0", str(disk_path)], check=True
+    )
     subprocess.run(["sgdisk", "--typecode=2:8300", str(disk_path)], check=True)
-    
+
     # 3. Format Partitions
     p1_sectors = 65365 - 3 + 1
     p1_size = p1_sectors * 512
-    
+
     # Calculate P2 size. 1G = 2097152 sectors.
     # We find the actual last sector from sgdisk or just assume 1G minus GPT overhead.
     total_sectors = 1024 * 1024 * 1024 // 512
-    p2_sectors = total_sectors - 65536 - 34 # 34 for the backup GPT at the end
+    p2_sectors = total_sectors - 65536 - 34  # 34 for the backup GPT at the end
     p2_size = p2_sectors * 512
-    
+
     p1_img = disk_path.with_suffix(".p1.tmp")
     p2_img = disk_path.with_suffix(".p2.tmp")
-    
+
     try:
         # Format P1 (FAT16 for EFI)
         print("Formatting Partition 1 (FAT16)...")
         p1_img.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(["truncate", "-s", str(p1_size), str(p1_img)], check=True)
-        subprocess.run(["mkfs.fat", "-f1", "-F16", "-n", "BOOT0EFI", str(p1_img)], check=True)
-        subprocess.run(["dd", f"if={p1_img}", f"of={disk_path}", "bs=512", "seek=3", "conv=notrunc"], check=True)
-        
+        subprocess.run(
+            ["mkfs.fat", "-f1", "-F16", "-n", "BOOT0EFI", str(p1_img)], check=True
+        )
+        subprocess.run(
+            [
+                "dd",
+                f"if={p1_img}",
+                f"of={disk_path}",
+                "bs=512",
+                "seek=3",
+                "conv=notrunc",
+            ],
+            check=True,
+        )
+
         # Format P2 (EXT4)
         print("Formatting Partition 2 (EXT4)...")
         subprocess.run(["truncate", "-s", str(p2_size), str(p2_img)], check=True)
         subprocess.run(["mkfs.ext4", "-F", str(p2_img)], check=True)
-        subprocess.run(["dd", f"if={p2_img}", f"of={disk_path}", "bs=512", "seek=65536", "conv=notrunc"], check=True)
-        
+        subprocess.run(
+            [
+                "dd",
+                f"if={p2_img}",
+                f"of={disk_path}",
+                "bs=512",
+                "seek=65536",
+                "conv=notrunc",
+            ],
+            check=True,
+        )
+
         print("Test disk created successfully.")
     except Exception as e:
         colors.error(f"Error creating test disk: {e}")
-        if disk_path.exists(): disk_path.unlink()
+        if disk_path.exists():
+            disk_path.unlink()
         raise
     finally:
-        if p1_img.exists(): p1_img.unlink()
-        if p2_img.exists(): p2_img.unlink()
+        if p1_img.exists():
+            p1_img.unlink()
+        if p2_img.exists():
+            p2_img.unlink()
+
 
 def propagate_skel(staging_dir, target_dir):
     """Skel propagation using original file-by-file method + snapshot verification"""
@@ -354,15 +458,21 @@ def propagate_skel(staging_dir, target_dir):
             s_item = skel_dir / item
             d_item = dest / item
 
-            if d_item.exists() and s_item.is_symlink() and d_item.is_dir() and not d_item.is_symlink():
-                colors.warn(f"Removing conflicting directory {d_item} to preserve skel symlink.")
+            if (
+                d_item.exists()
+                and s_item.is_symlink()
+                and d_item.is_dir()
+                and not d_item.is_symlink()
+            ):
+                colors.warn(
+                    f"Removing conflicting directory {d_item} to preserve skel symlink."
+                )
                 shutil.rmtree(d_item)
 
         # ORIGINAL cp -a --remove-destination (robust merge)
-        subprocess.run([
-            "cp", "-a", "--remove-destination",
-            f"{skel_dir}/.", str(dest)
-        ], check=True)
+        subprocess.run(
+            ["cp", "-a", "--remove-destination", f"{skel_dir}/.", str(dest)], check=True
+        )
 
 
 def remove_repo(name, repos, arches, bld_base):
@@ -373,7 +483,7 @@ def remove_repo(name, repos, arches, bld_base):
         return False
 
     colors.info(f"Removing repository '{name}'...")
-    
+
     # 1. Clean build outputs for each architecture
     for arch in arches:
         report_file = bld_base / arch / "report" / f"{name}.txt"
@@ -382,7 +492,7 @@ def remove_repo(name, repos, arches, bld_base):
             paths = get_report_paths(report_file)
             staging_dir = bld_base / arch / "staging"
             target_dir = bld_base / arch / "target"
-            
+
             for p in paths:
                 try:
                     if p.startswith("staging/"):
@@ -392,7 +502,7 @@ def remove_repo(name, repos, arches, bld_base):
                 except Exception as e:
                     colors.warn(f"[{arch}] Warning: Failed to remove {p}: {e}")
             report_file.unlink()
-    
+
     # 2. Delete the repository directory
     repo_dir = Path(target["repo_dir"])
     if repo_dir.exists():
@@ -400,12 +510,13 @@ def remove_repo(name, repos, arches, bld_base):
         if is_enabled():
             repo_removed(name, repo_dir)
         shutil.rmtree(repo_dir)
-    
+
     # 3. Remove from repos list to prevent sync attempts
     repos[:] = [r for r in repos if r["name"] != name]
-        
+
     colors.info(f"Repository '{name}' removed successfully.")
     return True
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -487,13 +598,13 @@ def main():
     if not args.conf:
         colors.error("Error: --conf is required.")
         sys.exit(1)
-    
+
     conf_files = [c.strip() for c in args.conf.split(",") if c.strip()]
-    
+
     if args.run and len(conf_files) > 1:
         colors.error("Error: --run requires exactly one configuration file.")
         sys.exit(1)
-    
+
     conf_name = Path(conf_files[0]).stem
     bld_base = BASE_DIR / "bld" / conf_name
     tools_install_dir = BASE_DIR / "bld" / "tools"
@@ -516,24 +627,24 @@ def main():
         if not conf_path.exists():
             colors.error(f"Error: Config file {conf_path} not found.")
             sys.exit(1)
-        
+
         rc, gc = load_repo_config(conf_path)
-        
+
         repos_config.extend(rc)
-        
+
         if not global_cfg:
             global_cfg = gc
         else:
             for k, v in gc.items():
                 if k not in global_cfg:
                     global_cfg[k] = v
-    
+
     arches = []
-    if 'arch' in global_cfg:
-        arches = [a.strip() for a in global_cfg['arch'].split(",") if a.strip()]
+    if "arch" in global_cfg:
+        arches = [a.strip() for a in global_cfg["arch"].split(",") if a.strip()]
     if not arches:
         arches = ["x32"]
-    
+
     # Deduplicate repos_config
     repos_config = deduplicate_repos(repos_config)
     for cfg in repos_config:
@@ -553,19 +664,27 @@ def main():
 
     build_all = False
     if args.build is not None and len(args.build) == 0:
-        if 'components' in global_cfg:
-            args.build = [c.strip() for c in global_cfg['components'].replace(',', ' ').split() if c.strip()]
+        if "components" in global_cfg:
+            args.build = [
+                c.strip()
+                for c in global_cfg["components"].replace(",", " ").split()
+                if c.strip()
+            ]
         else:
             build_all = True
 
     config_components = set()
-    if 'components' in global_cfg:
-        config_components = {c.strip() for c in global_cfg['components'].replace(',', ' ').split() if c.strip()}
+    if "components" in global_cfg:
+        config_components = {
+            c.strip()
+            for c in global_cfg["components"].replace(",", " ").split()
+            if c.strip()
+        }
 
     if args.build is not None and not build_all:
         required_names = set(args.build)
     else:
-        required_names = {r['name'] for r in repos_config}
+        required_names = {r["name"] for r in repos_config}
 
     filtered_repos = filter_by_requested(repos_config, required_names)
 
@@ -579,13 +698,13 @@ def main():
         trace_deps(build_order, dep_graph)
 
     keep_repo_dirs = get_keep_dirs(repos_config, dep_graph, config_components)
-    
+
     repos_to_sync = {r["name"] for r in filtered_repos}
 
     for cfg in repos_config:
         if cfg.get("is_virtual") or cfg["name"] not in repos_to_sync:
             continue
-        if 'repo_dir' not in cfg:
+        if "repo_dir" not in cfg:
             continue
 
         if sync_repo(cfg, una_base):
@@ -595,24 +714,28 @@ def main():
     # First, add any newly synced repos to valid dirs
     valid_repo_dirs = keep_repo_dirs.copy()
     for cfg in repos_config:
-        if cfg.get("is_virtual") or 'repo_dir' not in cfg:
+        if cfg.get("is_virtual") or "repo_dir" not in cfg:
             continue
         if cfg["name"] in repos_to_sync:
             valid_repo_dirs.add(Path(cfg["repo_dir"]).absolute())
-    
+
     # Remove repos from scanned list that are not in valid_repo_dirs
     scanned = scan_repos()
     for s_cfg in scanned:
         if Path(s_cfg["repo_dir"]).absolute() not in valid_repo_dirs:
-            colors.warn(f"Repository '{s_cfg['name']}' found in repo/ but not required by config. Removing...")
+            colors.warn(
+                f"Repository '{s_cfg['name']}' found in repo/ but not required by config. Removing..."
+            )
             remove_repo(s_cfg["name"], repos_config, arches, bld_base)
-    
+
     # Clean repos in filesystem that are not in valid_repo_dirs (including git repos)
     repo_base = BASE_DIR / "repo"
     if repo_base.exists():
         for d in repo_base.iterdir():
             if d.is_dir() and d.absolute() not in valid_repo_dirs:
-                colors.warn(f"Repository '{d.name}' exists in repo/ but not required by config. Removing...")
+                colors.warn(
+                    f"Repository '{d.name}' exists in repo/ but not required by config. Removing..."
+                )
                 shutil.rmtree(d, ignore_errors=True)
 
     repos_to_process = []
@@ -622,12 +745,21 @@ def main():
             repos_to_process.append(repos_by_name[name])
 
     # Check if repos exist before building or rebasing
-    if (args.build is not None or args.rebase):
-        missing = [r["name"] for r in repos_to_process 
-                  if not r.get("is_virtual") and "repo_dir" in r and not Path(r["repo_dir"]).exists()]
+    if args.build is not None or args.rebase:
+        missing = [
+            r["name"]
+            for r in repos_to_process
+            if not r.get("is_virtual")
+            and "repo_dir" in r
+            and not Path(r["repo_dir"]).exists()
+        ]
         if missing:
-            colors.warn(f"Warning: The following repository directories are missing: {', '.join(missing)}")
-            print("These should have been initialized automagically if a base URL was available.")
+            colors.warn(
+                f"Warning: The following repository directories are missing: {', '.join(missing)}"
+            )
+            print(
+                "These should have been initialized automagically if a base URL was available."
+            )
             sys.exit(1)
 
     if args.list:
@@ -639,21 +771,32 @@ def main():
         print_top_level_status(BASE_DIR)
         handle_repos(repos, "status")
 
-
     if args.build is not None or build_all:
         if not args.no_curses:
             try:
                 from mods.curses_ui import CursesUI
                 from mods.build import init_build, run_build
+
                 # Initialize build module
                 init_build(
-                    colors, load_repo_una, StepRunner,
-                    get_target_triple, get_arch_flags,
-                    propagate_skel, sync_kernel_config,
-                    is_repo_dirty, BASE_DIR, bld_base,
-                    arches, repos, repos_to_process,
-                    required_names, build_all, tools_install_dir,
-                    skel_dir, global_cfg
+                    colors,
+                    load_repo_una,
+                    StepRunner,
+                    get_target_triple,
+                    get_arch_flags,
+                    propagate_skel,
+                    sync_kernel_config,
+                    is_repo_dirty,
+                    BASE_DIR,
+                    bld_base,
+                    arches,
+                    repos,
+                    repos_to_process,
+                    required_names,
+                    build_all,
+                    tools_install_dir,
+                    skel_dir,
+                    global_cfg,
                 )
                 # Determine log_dir from conf name
                 conf_name = Path(conf_files[0]).stem
@@ -666,19 +809,33 @@ def main():
                 colors.error("Error: curses not available")
                 sys.exit(1)
             except Exception as e:
-                colors.warn(f"Warning: curses UI failed ({e}), falling back to non-curses mode")
+                colors.warn(
+                    f"Warning: curses UI failed ({e}), falling back to non-curses mode"
+                )
                 # Fall through to non-curses mode below
-            
+
         # Run build directly (no curses)
         from mods.build import init_build, run_build
+
         init_build(
-            colors, load_repo_una, StepRunner,
-            get_target_triple, get_arch_flags,
-            propagate_skel, sync_kernel_config,
-            is_repo_dirty, BASE_DIR, bld_base,
-            arches, repos, repos_to_process,
-            required_names, build_all, tools_install_dir,
-            skel_dir, global_cfg
+            colors,
+            load_repo_una,
+            StepRunner,
+            get_target_triple,
+            get_arch_flags,
+            propagate_skel,
+            sync_kernel_config,
+            is_repo_dirty,
+            BASE_DIR,
+            bld_base,
+            arches,
+            repos,
+            repos_to_process,
+            required_names,
+            build_all,
+            tools_install_dir,
+            skel_dir,
+            global_cfg,
         )
         run_build(args)
         return
@@ -687,8 +844,7 @@ def main():
         if not (repo_path / ".git").exists():
             return None
         result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=repo_path, capture_output=True, text=True
+            ["git", "rev-parse", "HEAD"], cwd=repo_path, capture_output=True, text=True
         )
         return result.stdout.strip() if result.returncode == 0 else None
 
@@ -707,7 +863,9 @@ def main():
             json.dump(state, f, indent=2)
 
     def check_tools_changed(tools_repos):
-        current_state = {r["name"]: get_repo_commit(Path(r["repo_dir"])) for r in tools_repos}
+        current_state = {
+            r["name"]: get_repo_commit(Path(r["repo_dir"])) for r in tools_repos
+        }
         saved_state = load_tools_state()
 
         for name, commit in current_state.items():
@@ -718,9 +876,9 @@ def main():
         return False
 
         all_tools_repos = [r for r in repos if r.get("type") == "tools"]
-        
+
         # Also check if any component explicitly requested tools (like build-tools)
-        has_tool_component = 'build-tools' in required_names
+        has_tool_component = "build-tools" in required_names
 
         tools_to_build = []
         if build_all:
@@ -734,7 +892,9 @@ def main():
             else:
                 colors.info("Tools already built and up to date, skipping...")
         elif repos_to_process:
-            target_requires_tools = any(r.get("type") != "tools" for r in repos_to_process)
+            target_requires_tools = any(
+                r.get("type") != "tools" for r in repos_to_process
+            )
             if target_requires_tools:
                 if not tools_state_file.exists():
                     colors.info("Tools not built, building...")
@@ -759,13 +919,27 @@ def main():
             colors.info("\n--- Tools Stage ---")
             for r in tools_to_build:
                 module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
-                if hasattr(module, "tools_configure"): module.tools_configure(tools_install_dir, arches=all_possible_arches)
-                if hasattr(module, "tools_build"): module.tools_build(tools_install_dir)
-                if hasattr(module, "tools_install"): module.tools_install(tools_install_dir)
-            new_state = {r["name"]: get_repo_commit(Path(r["repo_dir"])) for r in tools_to_build}
+                if hasattr(module, "tools_configure"):
+                    module.tools_configure(
+                        tools_install_dir, arches=all_possible_arches
+                    )
+                if hasattr(module, "tools_build"):
+                    module.tools_build(tools_install_dir)
+                if hasattr(module, "tools_install"):
+                    module.tools_install(tools_install_dir)
+            new_state = {
+                r["name"]: get_repo_commit(Path(r["repo_dir"])) for r in tools_to_build
+            }
             save_tools_state(new_state)
 
-        target_configs_to_build = [r for r in repos_to_process if r.get("type") != "tools" and not r.get("is_virtual") and r.get("type") != "virtual" and "repo_dir" in r]
+        target_configs_to_build = [
+            r
+            for r in repos_to_process
+            if r.get("type") != "tools"
+            and not r.get("is_virtual")
+            and r.get("type") != "virtual"
+            and "repo_dir" in r
+        ]
         for arch in arches:
             colors.info(f"\n====== Target Stage: {arch} ======")
             arch_bld_dir = bld_base / arch
@@ -780,9 +954,9 @@ def main():
                 colors.info(f"[{arch}] Phase -1: Skeleton Propagation (verified)")
                 skel_runner = StepRunner(arch, staging_dir, target_dir, bld_base)
                 skel_runner.run_step(
-                    cfg={"name": "skel"}, 
-                    step_name="propagate", 
-                    step_func=propagate_skel
+                    cfg={"name": "skel"},
+                    step_name="propagate",
+                    step_func=propagate_skel,
                 )
             else:
                 colors.warn(f"[{arch}] No skel directory found - empty staging/target")
@@ -790,29 +964,59 @@ def main():
             # Clean ALL target repos before build to avoid stale configs/artifacts between arches
             # This is critical for the kernel which relies on its .config in the source tree
             cleaned_dirs = set()
-            tools_dirs = {Path(r["repo_dir"]).absolute() for r in repos if r.get("type") == "tools" and "repo_dir" in r}
-            all_target_repos = [r for r in repos if r.get("type") != "tools" and "repo_dir" in r]
-            
+            tools_dirs = {
+                Path(r["repo_dir"]).absolute()
+                for r in repos
+                if r.get("type") == "tools" and "repo_dir" in r
+            }
+            all_target_repos = [
+                r for r in repos if r.get("type") != "tools" and "repo_dir" in r
+            ]
+
             for r in all_target_repos:
                 r_path = Path(r["repo_dir"]).absolute()
-                if r_path in cleaned_dirs: continue
-                if r_path in tools_dirs:
-                    colors.info(f"[{arch}] Skipping git clean for {r['name']} (shared with tools components)")
+                if r_path in cleaned_dirs:
                     continue
-                
+                if r_path in tools_dirs:
+                    colors.info(
+                        f"[{arch}] Skipping git clean for {r['name']} (shared with tools components)"
+                    )
+                    continue
+
                 if not r_path.exists():
                     continue
-                
+
                 colors.info(f"[{arch}] Cleaning {r['name']} ({r_path})...")
                 import subprocess
+
                 if is_repo_dirty(r_path):
-                    colors.error(f"[{arch}] ERROR: Repository {r['name']} is dirty. Please commit or stash changes before building.")
+                    colors.error(
+                        f"[{arch}] ERROR: Repository {r['name']} is dirty. Please commit or stash changes before building."
+                    )
                     sys.exit(1)
-                subprocess.run(["git", "clean", "-fdx", "-e", ".una_config"], cwd=r_path, check=True)
+                subprocess.run(
+                    ["git", "clean", "-fdx", "-e", ".una_config"],
+                    cwd=r_path,
+                    check=True,
+                )
                 # Ensure submodules are also cleaned to avoid arch-mismatch in static libs (e.g. nsd -> simdzone)
                 if (r_path / ".gitmodules").exists():
                     try:
-                        subprocess.run(["git", "submodule", "foreach", "--recursive", "git", "clean", "-fdx", "-e", ".una_config"], cwd=r_path, check=True)
+                        subprocess.run(
+                            [
+                                "git",
+                                "submodule",
+                                "foreach",
+                                "--recursive",
+                                "git",
+                                "clean",
+                                "-fdx",
+                                "-e",
+                                ".una_config",
+                            ],
+                            cwd=r_path,
+                            check=True,
+                        )
                     except subprocess.CalledProcessError:
                         # Submodules might not be initialized yet, which is fine
                         pass
@@ -829,111 +1033,99 @@ def main():
             musl_cfg = arch_bld_dir / "musl.cfg"
             musl_cxx_cfg = arch_bld_dir / "musl_c++.cfg"
             musl_static_cfg = arch_bld_dir / "musl_static.cfg"
-            
-            if not musl_cfg.exists() or not musl_cxx_cfg.exists() or not musl_static_cfg.exists():
+
+            if (
+                not musl_cfg.exists()
+                or not musl_cxx_cfg.exists()
+                or not musl_static_cfg.exists()
+            ):
                 colors.info(f"[{arch}] Generating compiler configurations...")
                 arch_bld_dir.mkdir(parents=True, exist_ok=True)
                 lld_path = tools_install_dir / "bin" / "ld.lld"
                 lib_p = staging_dir / "usr" / "lib"
-                
+
                 # Common flags (excluding system includes to control order)
                 common_flags = f"--target={target_triple}\n--sysroot={staging_dir}\n-fPIE\n{march}\n"
-                
+
                 # Pure C Config
-                musl_cfg.write_text(f"{common_flags}-isystem {staging_dir}/usr/include\n-fuse-ld={lld_path}\n-nostdlib\n-L{staging_dir}/usr/lib\n-lc\n-Wl,-dynamic-linker,{ld_musl}\n")
-                
+                musl_cfg.write_text(
+                    f"{common_flags}-isystem {staging_dir}/usr/include\n-fuse-ld={lld_path}\n-nostdlib\n-L{staging_dir}/usr/lib\n-lc\n-Wl,-dynamic-linker,{ld_musl}\n"
+                )
+
                 # C++ Config (MUST have c++/v1 before usr/include)
-                musl_cxx_cfg.write_text(f"{common_flags}-isystem {staging_dir}/usr/include/c++/v1\n-isystem {staging_dir}/usr/include\n--ld-path={lld_path}\n-nostdlib\n{lib_p}/Scrt1.o\n{lib_p}/crti.o\n-L{lib_p}\n-lc++\n-lc++abi\n-lunwind\n-lc\n{lib_p}/crtn.o\n-Wl,-dynamic-linker,{ld_musl}\n")
-                
+                musl_cxx_cfg.write_text(
+                    f"{common_flags}-isystem {staging_dir}/usr/include/c++/v1\n-isystem {staging_dir}/usr/include\n--ld-path={lld_path}\n-nostdlib\n{lib_p}/Scrt1.o\n{lib_p}/crti.o\n-L{lib_p}\n-lc++\n-lc++abi\n-lunwind\n-lc\n{lib_p}/crtn.o\n-Wl,-dynamic-linker,{ld_musl}\n"
+                )
+
                 # Static Config
-                musl_static_cfg.write_text(f"{common_flags}-isystem {staging_dir}/usr/include\n-fuse-ld={lld_path}\n-nostdlib\n{lib_p}/Scrt1.o\n{lib_p}/crti.o\n-L{lib_p}\n-lc\n{lib_p}/crtn.o\n-Wl,-dynamic-linker,{ld_musl}\n")
-            
-            cpu_flags = global_cfg.get('cpu_flags', '')
-            os.environ["CFLAGS"] = f"--config={musl_cfg} -pipe -D_FILE_OFFSET_BITS=64 {cpu_flags}"
-            os.environ["CXXFLAGS"] = f"--config={musl_cxx_cfg} -pipe -D_FILE_OFFSET_BITS=64 {cpu_flags}"
-            os.environ["CFLAGS_STATIC"] = f"--config={musl_static_cfg} -pipe -D_FILE_OFFSET_BITS=64 {cpu_flags}"
+                musl_static_cfg.write_text(
+                    f"{common_flags}-isystem {staging_dir}/usr/include\n-fuse-ld={lld_path}\n-nostdlib\n{lib_p}/Scrt1.o\n{lib_p}/crti.o\n-L{lib_p}\n-lc\n{lib_p}/crtn.o\n-Wl,-dynamic-linker,{ld_musl}\n"
+                )
+
+            cpu_flags = global_cfg.get("cpu_flags", "")
+            os.environ["CFLAGS"] = (
+                f"--config={musl_cfg} -pipe -D_FILE_OFFSET_BITS=64 {cpu_flags}"
+            )
+            os.environ["CXXFLAGS"] = (
+                f"--config={musl_cxx_cfg} -pipe -D_FILE_OFFSET_BITS=64 {cpu_flags}"
+            )
+            os.environ["CFLAGS_STATIC"] = (
+                f"--config={musl_static_cfg} -pipe -D_FILE_OFFSET_BITS=64 {cpu_flags}"
+            )
             os.environ["CPPFLAGS"] = f"-D_FILE_OFFSET_BITS=64 {cpu_flags}"
-            
+
             colors.info(f"[{arch}] Building Target Components in Dependency Order")
             for r in target_configs_to_build:
-                 if r.get("is_virtual") or r.get("type") == "virtual":
+                if r.get("is_virtual") or r.get("type") == "virtual":
                     colors.info(f"[{arch}] Skipping virtual component '{r['name']}'")
                     continue
-                
-                 colors.info(f"[{arch}] Processing component: {r['name']}")
-                
-                 if r["name"] == "linux-image":
-                    skel_etc = None
-                    if 'etc_dir' in global_cfg:
-                        skel_etc = BASE_DIR / global_cfg['etc_dir']
+
+                colors.info(f"[{arch}] Processing component: {r['name']}")
+
+                if r["name"] == "linux-image" and "kernel_image" in r:
+                    image_map = r["kernel_image"]
+                    if arch in image_map:
+                        rel_path = image_map[arch]
+                        src_img = Path(r["repo_dir"]) / rel_path
+
+                        kernel_name = global_cfg.get("kernel_name", "kernel")
+                        dest_img = bld_base / kernel_name
+
+                        if src_img.exists():
+                            colors.info(
+                                f"[{arch}] Copying kernel image {src_img} to {dest_img}"
+                            )
+                            shutil.copy(src_img, dest_img)
+
+                            # Copy initfilelist if it exists
+                            init_list_path = Path(r["repo_dir"]) / "initfilelist.txt"
+                            if init_list_path.exists():
+                                dest_init_list = (
+                                    bld_base / f"{kernel_name}.initfilelist.txt"
+                                )
+                                colors.info(
+                                    f"[{arch}] Copying initfilelist {init_list_path} to {dest_init_list}"
+                                )
+                                shutil.copy(init_list_path, dest_init_list)
+                            else:
+                                colors.error(f"[{arch}] Cannot copy {init_list_path}")
+                                sys.exit(1)
+                            # Sync back updated config to source
+                            src_config = Path(r["repo_dir"]) / ".config"
+                            if src_config.exists():
+                                kconfig_path = kwargs.get("kconfig")
+                                print(
+                                    f"[{arch}] Syncing back sanitized updated kernel config to {kconfig_path}"
+                                )
+                                sync_kernel_config(src_config, kconfig_path)
+                        else:
+                            colors.error(
+                                f"[{arch}] Warning: Kernel image not found at {src_img}"
+                            )
                     else:
-                        skel_etc = skel_dir / "etc"
-
-                    if skel_etc.exists():
-                        colors.info(f"[{arch}] Finalizing: Replacing /etc with {skel_etc} before kernel build...")
-                        shutil.rmtree(staging_dir / "etc", ignore_errors=True)
-                        shutil.rmtree(target_dir / "etc", ignore_errors=True)
-                        shutil.copytree(skel_etc, staging_dir / "etc", symlinks=True)
-                        shutil.copytree(skel_etc, target_dir / "etc", symlinks=True)
-                    elif 'etc_dir' in global_cfg:
-                        colors.error(f"[{arch}] Error: Skel etc override path {skel_etc} does not exist.")
-                        sys.exit(1)
-            
-                 # Debug: show repo being built
-                 colors.info(f"[{arch}] DEBUG: Building repo '{r['name']}'")
-                 colors.info(f"[{arch}] DEBUG: Repo path: {r['repo_dir']}")
-                 una_file = r.get("una_file", "una.py")
-                 colors.info(f"[{arch}] DEBUG: Loading module '{una_file}'")
-                 module = load_repo_una(r["repo_dir"], una_file)
-                 colors.info(f"[{arch}] DEBUG: Loaded module name: {module.__name__}")
-                 kwargs = {"arch": arch}
-            
-                 if r["name"] in ["linux-headers", "linux-image"]:
-                     kconfig = None
-                     if 'kconfig' in global_cfg:
-                         kconfig = BASE_DIR / global_cfg['kconfig'].replace("<arch>", arch)
-                     if not kconfig:
-                         kconfig = BASE_DIR / "confs" / f"kernel.{arch}.config"
-                     kwargs["kconfig"] = Path(kconfig).absolute()
-
-                 if hasattr(module, "target_configure"): runner.run_step(r, "target_configure", module.target_configure, **kwargs)
-                 if hasattr(module, "target_headers_install"): runner.run_step(r, "target_headers_install", module.target_headers_install, **kwargs)
-                 if hasattr(module, "target_build"): runner.run_step(r, "target_build", module.target_build, **kwargs)
-                 if hasattr(module, "target_install"): runner.run_step(r, "target_install", module.target_install, **kwargs)
-                 
-                 if r["name"] == "linux-image" and "kernel_image" in r:
-                     image_map = r["kernel_image"]
-                     if arch in image_map:
-                         rel_path = image_map[arch]
-                         src_img = Path(r["repo_dir"]) / rel_path
-                         
-                         kernel_name = global_cfg.get("kernel_name", "kernel")
-                         dest_img = bld_base / kernel_name
-                         
-                         if src_img.exists():
-                             colors.info(f"[{arch}] Copying kernel image {src_img} to {dest_img}")
-                             shutil.copy(src_img, dest_img)
-                         else:
-                             colors.error(f"[{arch}] Warning: Kernel image not found at {src_img}")
-                         
-                         # Copy initfilelist if it exists
-                         init_list_path = Path(r["repo_dir"]) / "initfilelist.txt"
-                         if init_list_path.exists():
-                             dest_init_list = bld_base / f"{kernel_name}.initfilelist.txt"
-                             colors.info(f"[{arch}] Copying initfilelist {init_list_path} to {dest_init_list}")
-                             shutil.copy(init_list_path, dest_init_list)
-                         else:
-                            colors.error(f"[{arch}] Cannot copy {init_list_path}")
-                            sys.exit(1)
-                         # Sync back updated config to source
-                         src_config = Path(r["repo_dir"]) / ".config"
-                         if src_config.exists():
-                             kconfig_path = kwargs.get("kconfig")
-                             print(f"[{arch}] Syncing back sanitized updated kernel config to {kconfig_path}")
-                             sync_kernel_config(src_config, kconfig_path)
-                     else:
-                         print(f"[{arch}] Warning: No kernel image path defined for this architecture")
-
+                        print(
+                            f"[{arch}] Warning: No kernel image path defined for this architecture"
+                        )
 
         # Post-build cleanup for workspace repositories
         print("\n--- Post-build Workspace Cleanup ---")
@@ -943,23 +1135,39 @@ def main():
             if r.get("is_virtual") or r.get("type") == "virtual" or "repo_dir" not in r:
                 continue
             r_path = Path(r["repo_dir"]).absolute()
-            if r_path in cleaned_dirs: continue
+            if r_path in cleaned_dirs:
+                continue
             if r_path.exists() and (r_path / ".git").exists():
                 print(f"Cleaning {r['name']} ({r['repo_dir']})...")
                 if is_repo_dirty(r_path):
-                    print(f"ERROR: Repository {r['name']} is dirty. Skipping post-build cleanup for this repo.")
+                    print(
+                        f"ERROR: Repository {r['name']} is dirty. Skipping post-build cleanup for this repo."
+                    )
                     continue
                 import subprocess
+
                 subprocess.run(["git", "clean", "-fdx"], cwd=r_path, check=True)
                 if (r_path / ".gitmodules").exists():
                     try:
-                        subprocess.run(["git", "submodule", "foreach", "--recursive", "git", "clean", "-fdx"], cwd=r_path, check=True)
+                        subprocess.run(
+                            [
+                                "git",
+                                "submodule",
+                                "foreach",
+                                "--recursive",
+                                "git",
+                                "clean",
+                                "-fdx",
+                            ],
+                            cwd=r_path,
+                            check=True,
+                        )
                     except subprocess.CalledProcessError:
                         pass
                 cleaned_dirs.add(r_path)
         # End of build process
         return True
-    
+
     if args.run:
         target_name = "linux-image"
         proj = next((r for r in repos if r["name"] == target_name), None)
@@ -977,7 +1185,9 @@ def main():
         kernel_name = global_cfg.get("kernel_name", "kernel")
         kernel_img = bld_base / kernel_name
         if not kernel_img.exists():
-            print(f"Error: Kernel image not found at {kernel_img}. Please build it first with --build {target_name}.")
+            print(
+                f"Error: Kernel image not found at {kernel_img}. Please build it first with --build {target_name}."
+            )
             sys.exit(1)
 
         try:
@@ -1000,8 +1210,11 @@ def main():
         if tag or args.rebase == "ALL" or args.rebase == "una":
             handle_top_level_repo(BASE_DIR, action, tag, squash=True)
 
-        repos_for_op = [r for r in repos_to_process
-                       if tag or args.rebase == "ALL" or args.rebase == r["name"]]
+        repos_for_op = [
+            r
+            for r in repos_to_process
+            if tag or args.rebase == "ALL" or args.rebase == r["name"]
+        ]
         handle_repos(repos_for_op, action, tag, include_all=False)
 
     if args.checkout:
@@ -1011,7 +1224,7 @@ def main():
     if args.clean:
         print("\n=== Global Cleanup ===")
         import subprocess
-        
+
         # 1. Clean build directory (staging and target, but keep reports?)
         # User said "removes all files produced by the build".
         # Reports are also produced by the build but useful for next build cleanup.
@@ -1020,7 +1233,7 @@ def main():
             arch_bld_dir = bld_base / arch
             staging_dir = arch_bld_dir / "staging"
             target_dir = arch_bld_dir / "target"
-            
+
             if staging_dir.exists():
                 print(f"Cleaning {staging_dir}...")
                 shutil.rmtree(staging_dir)
@@ -1029,7 +1242,7 @@ def main():
                 print(f"Cleaning {target_dir}...")
                 shutil.rmtree(target_dir)
                 target_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # 2. Clean workspace sub-repos
         cleaned_dirs = set()
         for r in repos:
@@ -1037,30 +1250,39 @@ def main():
             if r.get("is_virtual") or r.get("type") == "virtual" or "repo_dir" not in r:
                 continue
             r_path = Path(r["repo_dir"]).absolute()
-            if r_path in cleaned_dirs: continue
+            if r_path in cleaned_dirs:
+                continue
             if r_path.exists() and (r_path / ".git").exists():
                 print(f"Cleaning {r['name']} ({r['repo_dir']})...")
                 if is_repo_dirty(r_path):
-                    print(f"ERROR: Repository {r['name']} is dirty. Stopping global cleanup.")
+                    print(
+                        f"ERROR: Repository {r['name']} is dirty. Stopping global cleanup."
+                    )
                     sys.exit(1)
                 subprocess.run(["git", "clean", "-fdx"], cwd=r_path, check=True)
                 cleaned_dirs.add(r_path)
-                
+
         # 2.5 Clean unreferenced repos in repo/
         repo_base = BASE_DIR / "repo"
         if repo_base.exists():
-            valid_repo_dirs = {Path(r["repo_dir"]).absolute() for r in repos if not r.get("is_virtual") and "repo_dir" in r}
+            valid_repo_dirs = {
+                Path(r["repo_dir"]).absolute()
+                for r in repos
+                if not r.get("is_virtual") and "repo_dir" in r
+            }
             for d in repo_base.iterdir():
                 if d.is_dir() and d.absolute() not in valid_repo_dirs:
                     print(f"Removing unreferenced directory {d}...")
                     shutil.rmtree(d, ignore_errors=True)
-                    
+
         # 3. Clean top-level workspace (excluding reports, kernel images, and repos)
         print("Cleaning top-level workspace...")
         if is_repo_dirty(BASE_DIR):
             print("ERROR: Top-level repository is dirty. Stopping global cleanup.")
             sys.exit(1)
-        subprocess.run(["git", "clean", "-xfd", "-e", "bld/", "-e", "repo/"], cwd=BASE_DIR)
+        subprocess.run(
+            ["git", "clean", "-xfd", "-e", "bld/", "-e", "repo/"], cwd=BASE_DIR
+        )
 
     if args.report:
         from git import Repo
@@ -1074,13 +1296,14 @@ def main():
         summary_lines = []
 
         processed_dirs = set()
-        
+
         # Include all repositories from configuration
         all_repos_to_report = repos
 
         for cfg in all_repos_to_report:
             r_path = Path(cfg["repo_dir"]).absolute()
-            if r_path in processed_dirs: continue
+            if r_path in processed_dirs:
+                continue
             if not r_path.exists() or not (r_path / ".git").exists():
                 continue
 
@@ -1105,7 +1328,7 @@ def main():
                 diffstat = repo.git.diff(target, "--stat")
                 # 2. Get full diff
                 full_diff = repo.git.diff(target)
-                
+
                 # If there are no changes, we still record it
                 if not diffstat.strip():
                     diffstat = "No changes."
