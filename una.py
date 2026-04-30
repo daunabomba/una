@@ -1193,8 +1193,8 @@ def main():
              colors.info(f"[{arch}] DEBUG: Repo path: {r['repo_dir']}")
              una_file = r.get("una_file", "una.py")
              colors.info(f"[{arch}] DEBUG: Loading module '{una_file}'")
-                 module = load_repo_una(r["repo_dir"], una_file)
-                 colors.info(f"[{arch}] DEBUG: Loaded module name: {module.__name__}")
+             module = load_repo_una(r["repo_dir"], una_file)
+             colors.info(f"[{arch}] DEBUG: Loaded module name: {module.__name__}")
                  kwargs = {"arch": arch}
             
                  if r["name"] in ["linux-headers", "linux-image"]:
