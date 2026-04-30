@@ -628,7 +628,7 @@ def main():
 
     arches = []
     if "arch" in global_cfg:
-        arches = [a.strip() for a in global_cfg["arch"].split(",") if a.strip()]
+        arches = [a.strip() for a in global_cfg["arch"].replace(",", " ").split() if a.strip()]
     if not arches:
         arches = ["x32"]
 
