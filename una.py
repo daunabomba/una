@@ -1145,33 +1145,33 @@ def main():
                 lld_path = tools_install_dir / "bin" / "ld.lld"
                 lib_p = staging_dir / "usr" / "lib"
                 
-                # Common flags (excluding system includes to control order)
-                common_flags = f"--target={target_triple}\n--sysroot={staging_dir}\n-fPIE\n{march}\n"
-                
-                # Pure C Config
-                musl_cfg.write_text(f"{common_flags}-isystem {staging_dir}/usr/include\n-fuse-ld={lld_path}\n-nostdlib\n-L{staging_dir}/usr/lib\n-lc\n-Wl,-dynamic-linker,{ld_musl}\n")
-                
-                # C++ Config (MUST have c++/v1 before usr/include)
-                musl_cxx_cfg.write_text(f"{common_flags}-isystem {staging_dir}/usr/include/c++/v1\n-isystem {staging_dir}/usr/include\n--ld-path={lld_path}\n-nostdlib\n{lib_p}/Scrt1.o\n{lib_p}/crti.o\n-L{lib_p}\n-lc++\n-lc++abi\n-lunwind\n-lc\n{lib_p}/crtn.o\n-Wl,-dynamic-linker,{ld_musl}\n")
-                
-                # Static Config
-                musl_static_cfg.write_text(f"{common_flags}-isystem {staging_dir}/usr/include\n-fuse-ld={lld_path}\n-nostdlib\n{lib_p}/Scrt1.o\n{lib_p}/crti.o\n-L{lib_p}\n-lc\n{lib_p}/crtn.o\n-Wl,-dynamic-linker,{ld_musl}\n")
-
-            cpu_flags = global_cfg.get('cpu_flags', '')
-            os.environ["CFLAGS"] = f"--config={musl_cfg} -pipe -D_FILE_OFFSET_BITS=64 {cpu_flags}"
-            os.environ["CXXFLAGS"] = f"--config={musl_cxx_cfg} -pipe -D_FILE_OFFSET_BITS=64 {cpu_flags}"
-            os.environ["CFLAGS_STATIC"] = f"--config={musl_static_cfg} -pipe -D_FILE_OFFSET_BITS=64 {cpu_flags}"
-            os.environ["CPPFLAGS"] = f"-D_FILE_OFFSET_BITS=64 {cpu_flags}"
-
-            colors.info(f"[{arch}] Building Target Components in Dependency Order")
-            for r in target_configs_to_build:
-                if r.get("is_virtual") or r.get("type") == "virtual":
-                    colors.info(f"[{arch}] Skipping virtual component '{r['name']}'")
-                    continue
-
-                colors.info(f"[{arch}] Processing component: {r['name']}")
-            
-                if r["name"] == "linux-image":
+                 # Common flags (excluding system includes to control order)
+                 common_flags = f"--target={target_triple}\n--sysroot={staging_dir}\n-fPIE\n{march}\n"
+ 
+                 # Pure C Config
+                 musl_cfg.write_text(f"{common_flags}-isystem {staging_dir}/usr/include\n-fuse-ld={lld_path}\n-nostdlib\n-L{staging_dir}/usr/lib\n-lc\n-Wl,-dynamic-linker,{ld_musl}\n")
+ 
+                 # C++ Config (MUST have c++/v1 before usr/include)
+                 musl_cxx_cfg.write_text(f"{common_flags}-isystem {staging_dir}/usr/include/c++/v1\n-isystem {staging_dir}/usr/include\n--ld-path={lld_path}\n-nostdlib\n{lib_p}/Scrt1.o\n{lib_p}/crti.o\n-L{lib_p}\n-lc++\n-lc++abi\n-lunwind\n-lc\n{lib_p}/crtn.o\n-Wl,-dynamic-linker,{ld_musl}\n")
+ 
+                 # Static Config
+                 musl_static_cfg.write_text(f"{common_flags}-isystem {staging_dir}/usr/include\n-fuse-ld={lld_path}\n-nostdlib\n{lib_p}/Scrt1.o\n{lib_p}/crti.o\n-L{lib_p}\n-lc\n{lib_p}/crtn.o\n-Wl,-dynamic-linker,{ld_musl}\n")
+ 
+             cpu_flags = global_cfg.get('cpu_flags', '')
+             os.environ["CFLAGS"] = f"--config={musl_cfg} -pipe -D_FILE_OFFSET_BITS=64 {cpu_flags}"
+             os.environ["CXXFLAGS"] = f"--config={musl_cxx_cfg} -pipe -D_FILE_OFFSET_BITS=64 {cpu_flags}"
+             os.environ["CFLAGS_STATIC"] = f"--config={musl_static_cfg} -pipe -D_FILE_OFFSET_BITS=64 {cpu_flags}"
+             os.environ["CPPFLAGS"] = f"-D_FILE_OFFSET_BITS=64 {cpu_flags}"
+ 
+             colors.info(f"[{arch}] Building Target Components in Dependency Order")
+             for r in target_configs_to_build:
+                 if r.get("is_virtual") or r.get("type") == "virtual":
+                     colors.info(f"[{arch}] Skipping virtual component '{r['name']}'")
+                     continue
+             
+                 colors.info(f"[{arch}] Processing component: {r['name']}")
+             
+                 if r["name"] == "linux-image":
                     skel_etc = None
                     if 'etc_dir' in global_cfg:
                         skel_etc = BASE_DIR / global_cfg['etc_dir']
@@ -1188,25 +1188,25 @@ def main():
                         colors.error(f"[{arch}] Error: Skel etc override path {skel_etc} does not exist.")
                         sys.exit(1)
 
-                # Debug: show repo being built
-                colors.info(f"[{arch}] DEBUG: Building repo '{r['name']}'")
-                colors.info(f"[{arch}] DEBUG: Repo path: {r['repo_dir']}")
-                una_file = r.get("una_file", "una.py")
-                colors.info(f"[{arch}] DEBUG: Loading module '{una_file}'")
-                module = load_repo_una(r["repo_dir"], una_file)
-                colors.info(f"[{arch}] DEBUG: Loaded module name: {module.__name__}")
-                kwargs = {"arch": arch}
-                
-                if r["name"] in ["linux-headers", "linux-image"]:
-                    kconfig = None
-                    if 'kconfig' in global_cfg:
-                        kconfig = BASE_DIR / global_cfg['kconfig'].replace("<arch>", arch)
-                    if not kconfig:
-                        kconfig = BASE_DIR / "confs" / f"kernel.{arch}.config"
-                    kwargs["kconfig"] = Path(kconfig).absolute()
+                 # Debug: show repo being built
+                 colors.info(f"[{arch}] DEBUG: Building repo '{r['name']}'")
+                 colors.info(f"[{arch}] DEBUG: Repo path: {r['repo_dir']}")
+                 una_file = r.get("una_file", "una.py")
+                 colors.info(f"[{arch}] DEBUG: Loading module '{una_file}'")
+                 module = load_repo_una(r["repo_dir"], una_file)
+                 colors.info(f"[{arch}] DEBUG: Loaded module name: {module.__name__}")
+                 kwargs = {"arch": arch}
 
-                if hasattr(module, "target_configure"): runner.run_step(r, "target_configure", module.target_configure, **kwargs)
-                if hasattr(module, "target_headers_install"): runner.run_step(r, "target_headers_install", module.target_headers_install, **kwargs)
+                 if r["name"] in ["linux-headers", "linux-image"]:
+                     kconfig = None
+                     if 'kconfig' in global_cfg:
+                         kconfig = BASE_DIR / global_cfg['kconfig'].replace("<arch>", arch)
+                     if not kconfig:
+                         kconfig = BASE_DIR / "confs" / f"kernel.{arch}.config"
+                     kwargs["kconfig"] = Path(kconfig).absolute()
+
+                 if hasattr(module, "target_configure"): runner.run_step(r, "target_configure", module.target_configure, **kwargs)
+                 if hasattr(module, "target_headers_install"): runner.run_step(r, "target_headers_install", module.target_headers_install, **kwargs)
                  if hasattr(module, "target_build"): runner.run_step(r, "target_build", module.target_build, **kwargs)
                  if hasattr(module, "target_install"): runner.run_step(r, "target_install", module.target_install, **kwargs)
                  
