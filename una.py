@@ -21,6 +21,7 @@ from mods.config import set_base_dir, load_repo_config, scan_repos, save_repo_st
 from mods.deps import get_build_order, get_keep_dirs, filter_repos_for_build, filter_repos_for_sync
 from mods.git_ops import sync_repo, handle_repos, handle_top_level_repo, print_top_level_status
 from mods.trace import init_trace, is_enabled, repo_created, repo_removed, repo_synced, build_step_start, build_step_end, tools_step_start, tools_step_end, trace_deps
+from mods.emulation import get_qemu_command, add_test_disk, get_console_args, run_qemu
 
 skel_dir = BASE_DIR / "skel"
 
