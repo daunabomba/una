@@ -20,7 +20,7 @@ from mods import colors
 from mods.config import set_base_dir, load_repo_config, scan_repos, save_repo_state, deduplicate_repos, filter_by_requested, ConfigError
 from mods.deps import get_build_order, get_keep_dirs, filter_repos_for_build, filter_repos_for_sync
 from mods.git_ops import sync_repo, handle_repos, handle_top_level_repo, print_top_level_status
-from mods.emulation import get_qemu_command, add_test_disk, get_console_args, run_qemu
+from mods.trace import init_trace, is_enabled, repo_created, repo_removed, repo_synced, build_step_start, build_step_end, tools_step_start, tools_step_end
 
 skel_dir = BASE_DIR / "skel"
 
@@ -69,6 +69,8 @@ class StepRunner:
     def run_step(self, cfg, step_name, step_func, **kwargs):
         name = cfg["name"]
         colors.info(f"[{self.arch}] Running {name}::{step_name}...")
+        if is_enabled():
+            build_step_start(self.arch, name, step_name)
         
         # 1. Cleanup and Pre-snapshot on first call for this component
         if name not in self.cleaned_components:
@@ -203,6 +205,9 @@ class StepRunner:
         
         report_file = self.bld_base / self.arch / "report" / f"{name}.txt"
         write_report(combined_added, combined_mod, combined_del, report_file)
+
+        if is_enabled():
+            build_step_end(self.arch, name, step_name)
 
 
 def is_repo_dirty(repo_path: Path):
@@ -391,6 +396,8 @@ def remove_repo(name, repos, arches, bld_base):
     repo_dir = Path(target["repo_dir"])
     if repo_dir.exists():
         print(f"Deleting repository directory: {repo_dir}")
+        if is_enabled():
+            repo_removed(name, repo_dir)
         shutil.rmtree(repo_dir)
     
     # 3. Remove from repos list to prevent sync attempts
@@ -465,8 +472,16 @@ def main():
         action="store_true",
         help="Disable curses split-screen display (curses is enabled by default).",
     )
+    parser.add_argument(
+        "--trace",
+        metavar="FILE",
+        help="Trace repo and build operations to specified file (overwrites if exists).",
+    )
 
     args = parser.parse_args()
+
+    if args.trace:
+        init_trace(args.trace)
 
     if not args.conf:
         colors.error("Error: --conf is required.")

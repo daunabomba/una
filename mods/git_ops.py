@@ -13,6 +13,7 @@ from mods.utils import (
     TqdmProgress,
     init_or_reset_repo,
 )
+from mods.trace import is_enabled, repo_created, repo_synced
 
 
 def handle_top_level_repo(base_dir: Path, action: str, tag: str = None, squash: bool = True):
@@ -173,5 +174,11 @@ def sync_repo(cfg: dict, una_base: str) -> bool:
         reset=needs_reset,
         tag=cfg.get("tag")
     )
+
+    if is_enabled():
+        if needs_reset:
+            repo_created(cfg['name'], repo_dir)
+        else:
+            repo_synced(cfg['name'], repo_dir)
 
     return needs_reset

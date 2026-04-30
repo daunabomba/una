@@ -8,6 +8,8 @@ import json
 import shutil
 from pathlib import Path
 
+from mods.trace import is_enabled, tools_step_start, tools_step_end, build_step_start, build_step_end
+
 # These will be set by init_build()
 colors = None
 load_repo_una = None
@@ -142,11 +144,15 @@ def run_build(args):
     
     if tools_to_build:
         colors.info("\n--- Tools Stage ---")
+        if is_enabled():
+            tools_step_start("tools_configure")
         for r in tools_to_build:
             module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
             if hasattr(module, "tools_configure"): module.tools_configure(tools_install_dir, arches=all_possible_arches)
             if hasattr(module, "tools_build"): module.tools_build(tools_install_dir)
             if hasattr(module, "tools_install"): module.tools_install(tools_install_dir)
+        if is_enabled():
+            tools_step_end("tools_configure")
         new_state = {r["name"]: get_repo_commit(Path(r["repo_dir"])) for r in tools_to_build}
         save_tools_state(new_state)
     
@@ -275,10 +281,22 @@ def run_build(args):
                     kconfig = BASE_DIR / "confs" / f"kernel.{arch}.config"
                 kwargs["kconfig"] = Path(kconfig).absolute()
             
-            if hasattr(module, "target_configure"): runner.run_step(r, "target_configure", module.target_configure, **kwargs)
-            if hasattr(module, "target_headers_install"): runner.run_step(r, "target_headers_install", module.target_headers_install, **kwargs)
-            if hasattr(module, "target_build"): runner.run_step(r, "target_build", module.target_build, **kwargs)
-            if hasattr(module, "target_install"): runner.run_step(r, "target_install", module.target_install, **kwargs)
+            if hasattr(module, "target_configure"):
+                if is_enabled(): build_step_start(arch, r["name"], "target_configure")
+                runner.run_step(r, "target_configure", module.target_configure, **kwargs)
+                if is_enabled(): build_step_end(arch, r["name"], "target_configure")
+            if hasattr(module, "target_headers_install"):
+                if is_enabled(): build_step_start(arch, r["name"], "target_headers_install")
+                runner.run_step(r, "target_headers_install", module.target_headers_install, **kwargs)
+                if is_enabled(): build_step_end(arch, r["name"], "target_headers_install")
+            if hasattr(module, "target_build"):
+                if is_enabled(): build_step_start(arch, r["name"], "target_build")
+                runner.run_step(r, "target_build", module.target_build, **kwargs)
+                if is_enabled(): build_step_end(arch, r["name"], "target_build")
+            if hasattr(module, "target_install"):
+                if is_enabled(): build_step_start(arch, r["name"], "target_install")
+                runner.run_step(r, "target_install", module.target_install, **kwargs)
+                if is_enabled(): build_step_end(arch, r["name"], "target_install")
             
             if r["name"] == "linux-image" and "kernel_image" in r:
                 image_map = r["kernel_image"]
