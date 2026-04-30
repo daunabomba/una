@@ -35,7 +35,11 @@ class Writer:
         return len(text)
         
     def flush(self):
-        pass
+        with self.lock:
+            try:
+                self.win.refresh()
+            except Exception:
+                pass
 
 
 class CursesUI:
