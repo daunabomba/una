@@ -793,6 +793,41 @@ def main():
     
     pruned_graph = {k: [d for d in v if d in required_names] for k, v in dep_graph.items() if k in required_names}
     
+    # Build set of repo directory paths to KEEP based on config file components
+    # This keeps ALL repos referenced by the config, not just what's being built
+    keep_repo_dirs = set()
+    
+    # Get all components from the config file
+    config_components = set()
+    if 'components' in global_cfg:
+        config_components = {c.strip() for c in global_cfg['components'].replace(',', ' ').split() if c.strip()}
+    
+    # Map component names to their repo_dir paths
+    for r in repos_config:
+        if r["name"] in config_components and "repo_dir" in r:
+            keep_repo_dirs.add(Path(r["repo_dir"]).absolute())
+    
+    # Also keep all dependencies of config components
+    def add_deps(name, visited=None):
+        if visited is None:
+            visited = set()
+        if name in visited:
+            return
+        visited.add(name)
+        for dep in dep_graph.get(name, []):
+            dep_repo = next((r for r in repos_config if r["name"] == dep), None)
+            if dep_repo and "repo_dir" in dep_repo:
+                keep_repo_dirs.add(Path(dep_repo["repo_dir"]).absolute())
+            add_deps(dep, visited)
+    
+    for comp in config_components:
+        add_deps(comp)
+    
+    # Also keep tools repos (build-tools, llvm, etc.)
+    for r in repos_config:
+        if r.get("type") == "tools" and "repo_dir" in r:
+            keep_repo_dirs.add(Path(r["repo_dir"]).absolute())
+    
     # Sync/Init for repos - only sync repos in the required dependency set
     for cfg in repos_config:
         # Skip virtual aliases
@@ -839,11 +874,8 @@ def main():
             save_repo_state(cfg)
 
     # Cleanup AFTER sync - remove repos not in current config
-    # Build set of valid repo directory paths from required repos
-    valid_repo_dirs = set()
-    for r in repos_config:
-        if r["name"] in required_names and "repo_dir" in r:
-            valid_repo_dirs.add(Path(r["repo_dir"]).absolute())
+    # Use keep_repo_dirs built earlier
+    valid_repo_dirs = keep_repo_dirs
     
     # Remove repos from scanned list that are not in valid_repo_dirs
     scanned = scan_repos()
