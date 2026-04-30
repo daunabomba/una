@@ -29,6 +29,26 @@ def get_build_order(repos: list, required_names: set = None) -> tuple[list, dict
     """
     dep_graph = build_dep_graph(repos)
 
+    # Hardcode: linux-image depends on all other components
+    # that don't depend on linux-image (to avoid circular deps)
+    all_names = {r["name"] for r in repos}
+    if "linux-image" in all_names:
+        # Find components that depend on linux-image (directly or indirectly)
+        depends_on_linux = set()
+        def find_deps_on_linux(name: str, visited: set):
+            if name in visited:
+                return
+            visited.add(name)
+            for n, deps in dep_graph.items():
+                if name in deps and n not in depends_on_linux:
+                    depends_on_linux.add(n)
+                    find_deps_on_linux(n, visited)
+        find_deps_on_linux("linux-image", set())
+
+        # linux-image depends on all except itself and those that depend on it
+        other_names = [n for n in all_names if n != "linux-image" and n not in depends_on_linux]
+        dep_graph["linux-image"] = other_names
+
     if required_names:
         prune_graph(dep_graph, required_names)
 
