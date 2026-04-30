@@ -118,7 +118,8 @@ def _handle_repo_operation(cfg: dict, r_path: Path, action: str, tag: str = None
 
         if branch:
             target_branch = f"{remote_prefix}/{branch}"
-        elif tag_name:
+        elif tag_name and action in ["checkout", "save"]:
+            # Only use tag for checkout and save, not for rebase
             target_branch = tag_name
         else:
             target_branch = f"{remote_prefix}/{get_remote_head(repo, remote_prefix)}"
@@ -126,6 +127,7 @@ def _handle_repo_operation(cfg: dict, r_path: Path, action: str, tag: str = None
     if action == "save" and tag:
         _save_and_push(repo, target_branch, tag)
     elif action == "rebase":
+        # For rebase, ignore tag - always rebase onto the appropriate branch
         _rebase_and_push(repo, target_branch, squash=True, tag=cfg.get("tag"))
     elif action == "checkout" and tag:
         print(f"Checking out tag '{tag}'...")
