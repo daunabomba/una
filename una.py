@@ -742,16 +742,6 @@ def main():
     else:
         required_names = set(dep_graph.keys())
     
-    # Expand dependencies
-    dep_graph = {r["name"]: r.get("depends", []) for r in repos}
-    queue = list(required_names)
-    while queue:
-        curr = queue.pop(0)
-        for dep in dep_graph.get(curr, []):
-            if dep not in required_names:
-                required_names.add(dep)
-                queue.append(dep)
-    
     pruned_graph = {k: [d for d in v if d in required_names] for k, v in dep_graph.items() if k in required_names}
     
     all_repos_names = {r["name"] for r in repos}
@@ -785,7 +775,16 @@ def main():
         all_repos_names = {r["name"] for r in repos}
         missing = next_missing - all_repos_names
     
+    # Expand dependencies AFTER all missing deps are loaded
     dep_graph = {r["name"]: r.get("depends", []) for r in repos}
+    queue = list(required_names)
+    while queue:
+        curr = queue.pop(0)
+        for dep in dep_graph.get(curr, []):
+            if dep not in required_names:
+                required_names.add(dep)
+                queue.append(dep)
+    
     for name in list(required_names):
         for dep in dep_graph.get(name, []):
             if dep not in required_names:
