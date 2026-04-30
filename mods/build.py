@@ -407,7 +407,7 @@ def run_build(args):
 
                     # Copy initfilelist with .txt extension
                     src_initfilelist = Path(r["repo_dir"]) / "initfilelist"
-                    dest_initfilelist = bld_base / f"{kernel_name}.txt"
+                    dest_initfilelist = bld_base / f"{kernel_name}.list"
                     if src_initfilelist.exists():
                         print(f"[{arch}] Copying initfilelist to {dest_initfilelist}")
                         shutil.copy(src_initfilelist, dest_initfilelist)
