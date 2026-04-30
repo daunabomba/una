@@ -117,13 +117,19 @@ class CursesUI:
         
         # Wait for build to complete or user presses 'q'
         try:
-            while not self.build_thread or self.build_thread.is_alive():
-                ch = stdscr.getch()
-                if ch == ord('q'):
-                    break
-                time.sleep(0.1)
+            if self.build_thread:
+                while self.build_thread.is_alive():
+                    ch = stdscr.getch()
+                    if ch == ord('q'):
+                        break
+                    time.sleep(0.1)
+        except Exception as e:
+            pass
         finally:
-            self.close()
+            try:
+                self.close()
+            except:
+                pass
             
     def _start_watcher(self):
         """Watch log directory for new logs."""
@@ -180,6 +186,12 @@ class CursesUI:
             sys.stdout = self.old_stdout
         if self.old_stderr:
             sys.stderr = self.old_stderr
+        
+        # Only call endwin if curses was properly initialized
+        try:
+            curses.endwin()
+        except:
+            pass
             
         try:
             curses.nocbreak()

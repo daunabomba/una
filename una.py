@@ -969,6 +969,9 @@ def main():
             except ImportError:
                 colors.error("Error: curses not available")
                 sys.exit(1)
+            except Exception as e:
+                colors.warn(f"Warning: curses UI failed ({e}), falling back to non-curses mode")
+                # Fall through to non-curses mode below
             
         # Run build directly (no curses)
         from mods.build import init_build, run_build
