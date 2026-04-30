@@ -1207,32 +1207,39 @@ def main():
 
                 if hasattr(module, "target_configure"): runner.run_step(r, "target_configure", module.target_configure, **kwargs)
                 if hasattr(module, "target_headers_install"): runner.run_step(r, "target_headers_install", module.target_headers_install, **kwargs)
-                if hasattr(module, "target_build"): runner.run_step(r, "target_build", module.target_build, **kwargs)
-                if hasattr(module, "target_install"): runner.run_step(r, "target_install", module.target_install, **kwargs)
-                
-                if r["name"] == "linux-image" and "kernel_image" in r:
-                    image_map = r["kernel_image"]
-                    if arch in image_map:
-                        rel_path = image_map[arch]
-                        src_img = Path(r["repo_dir"]) / rel_path
-                        
-                        kernel_name = global_cfg.get("kernel_name", "kernel")
-                        dest_img = bld_base / kernel_name
-                        
-                        if src_img.exists():
-                            colors.info(f"[{arch}] Copying kernel image {src_img} to {dest_img}")
-                            shutil.copy(src_img, dest_img)
-                        else:
-                            colors.error(f"[{arch}] Warning: Kernel image not found at {src_img}")
-                        
-                        # Sync back updated config to source
-                        src_config = Path(r["repo_dir"]) / ".config"
-                        if src_config.exists():
-                            kconfig_path = kwargs.get("kconfig")
-                            print(f"[{arch}] Syncing back sanitized updated kernel config to {kconfig_path}")
-                            sync_kernel_config(src_config, kconfig_path)
-                    else:
-                        print(f"[{arch}] Warning: No kernel image path defined for this architecture")
+                 if hasattr(module, "target_build"): runner.run_step(r, "target_build", module.target_build, **kwargs)
+                 if hasattr(module, "target_install"): runner.run_step(r, "target_install", module.target_install, **kwargs)
+                 
+                 if r["name"] == "linux-image" and "kernel_image" in r:
+                     image_map = r["kernel_image"]
+                     if arch in image_map:
+                         rel_path = image_map[arch]
+                         src_img = Path(r["repo_dir"]) / rel_path
+                         
+                         kernel_name = global_cfg.get("kernel_name", "kernel")
+                         dest_img = bld_base / kernel_name
+                         
+                         if src_img.exists():
+                             colors.info(f"[{arch}] Copying kernel image {src_img} to {dest_img}")
+                             shutil.copy(src_img, dest_img)
+                         else:
+                             colors.error(f"[{arch}] Warning: Kernel image not found at {src_img}")
+                         
+                         # Copy initfilelist if it exists
+                         init_list_path = Path(r["repo_dir"]) / "initfilelist.txt"
+                         if init_list_path.exists():
+                             dest_init_list = bld_base / f"{kernel_name}.initfilelist.txt"
+                             colors.info(f"[{arch}] Copying initfilelist {init_list_path} to {dest_init_list}")
+                             shutil.copy(init_list_path, dest_init_list)
+                         
+                         # Sync back updated config to source
+                         src_config = Path(r["repo_dir"]) / ".config"
+                         if src_config.exists():
+                             kconfig_path = kwargs.get("kconfig")
+                             print(f"[{arch}] Syncing back sanitized updated kernel config to {kconfig_path}")
+                             sync_kernel_config(src_config, kconfig_path)
+                     else:
+                         print(f"[{arch}] Warning: No kernel image path defined for this architecture")
 
 
         # Post-build cleanup for workspace repositories
