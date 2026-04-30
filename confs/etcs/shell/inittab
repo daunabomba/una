@@ -1,3 +1,3 @@
 ::sysinit:/usr/sbin/mdev -s
 
-console::respawn:-/bin/sh
+ttyS0::respawn:-/bin/sh
