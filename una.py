@@ -742,55 +742,61 @@ def main():
     else:
         required_names = set(dep_graph.keys())
     
-    pruned_graph = {k: [d for d in v if d in required_names] for k, v in dep_graph.items() if k in required_names}
-    
-    all_repos_names = {r["name"] for r in repos}
-    missing = required_names - all_repos_names
-    while missing:
-        colors.info(f"Loading missing dependencies: {missing}")
-        next_missing = set()
-        for name in missing:
-            repo_file = BASE_DIR / "confs" / "repos" / f"{name}.repo"
-            if repo_file.exists():
-                rcp = configparser.ConfigParser()
-                rcp.read(repo_file)
-                for section in rcp.sections():
-                    cfg = dict(rcp[section])
-                    cfg['name'] = section
-                    repos_config.append(cfg)
-                    if not cfg.get("is_virtual", False):
-                        if una_base:
-                            base = una_base or "UNKNOWN_BASE"
-                            if not base.endswith("/") and not base.endswith(":"):
-                                base += "/"
-                            cfg["una_url"] = f"{base}{cfg.get('una_repo', '')}"
-                        repos.append(cfg)
-                    for dep in cfg.get("depends", "").replace(",", " ").split():
-                        dep = dep.strip()
-                        if dep and dep not in all_repos_names:
-                            next_missing.add(dep)
-                            required_names.add(dep)
-            else:
-                colors.warn(f"Warning: Repo config for {name} not found.")
-        all_repos_names = {r["name"] for r in repos}
-        missing = next_missing - all_repos_names
-    
-    # Expand dependencies AFTER all missing deps are loaded
-    dep_graph = {r["name"]: r.get("depends", []) for r in repos}
+    # Build dependency graph using BFS to discover all required repos
+    dep_graph = {}
     queue = list(required_names)
+    
     while queue:
-        curr = queue.pop(0)
-        for dep in dep_graph.get(curr, []):
-            if dep not in required_names:
-                required_names.add(dep)
+        name = queue.pop(0)
+        
+        # Skip if we've already processed this repo
+        if name in dep_graph:
+            continue
+            
+        # Load the repo config
+        repo_file = BASE_DIR / "confs" / "repos" / f"{name}.repo"
+        if not repo_file.exists():
+            colors.warn(f"Warning: Repo config for {name} not found.")
+            dep_graph[name] = []  # No dependencies
+            continue
+            
+        rcp = configparser.ConfigParser()
+        rcp.read(repo_file)
+        # Take the first section (should be only one)
+        section = rcp.sections()[0] if rcp.sections() else name
+        cfg = dict(rcp[section])
+        cfg['name'] = name
+        repos_config.append(cfg)
+        
+        # Check if virtual
+        is_virtual = cfg.get("is_virtual", False) or cfg.get("type") == "virtual"
+        
+        # Add to repos list for syncing if not virtual
+        if not is_virtual:
+            if una_base:
+                base = una_base or "UNKNOWN_BASE"
+                if not base.endswith("/") and not base.endswith(":"):
+                    base += "/"
+                cfg["una_url"] = f"{base}{cfg.get('una_repo', '')}"
+            repos.append(cfg)
+        
+        # Get dependencies
+        dep_string = cfg.get("depends", "")
+        if dep_string:
+            deps = [d.strip() for d in dep_string.replace(",", " ").split() if d.strip()]
+        else:
+            deps = []
+        
+        dep_graph[name] = deps
+        
+        # Add dependencies to queue for processing
+        for dep in deps:
+            if dep not in dep_graph:
                 queue.append(dep)
-    
-    for name in list(required_names):
-        for dep in dep_graph.get(name, []):
-            if dep not in required_names:
                 required_names.add(dep)
     
-    pruned_graph = {k: [d for d in v if d in required_names] for k, v in dep_graph.items() if k in required_names}
+    # Build final pruned_graph (only include repos we actually loaded)
+    pruned_graph = {k: v for k, v in dep_graph.items() if k in required_names}
     
     # Build set of repo directory paths to KEEP based on config file components
     # This keeps ALL repos referenced by the config, not just what's being built
