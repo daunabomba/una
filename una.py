@@ -995,7 +995,7 @@ def main():
                     )
                     sys.exit(1)
                 if is_enabled():
-                    from mod>s.trace import repo_cleaned
+                    from mods.trace import repo_cleaned
                     repo_cleaned(Path(r_path))
                 subprocess.run(["git", "clean", "-qfdx"], cwd=r_path, check=True)
                 if (r_path / ".gitmodules").exists():
@@ -1111,7 +1111,6 @@ def main():
                     )
                     sys.exit(1)
                 if is_enabled():
-                    from pathlib import Path
                     from mods.trace import repo_cleaned
                     repo_cleaned(Path(r_path))
                 subprocess.run(["git", "clean", "-fdx", "-q"], cwd=r_path, check=True)
