@@ -994,160 +994,9 @@ def main():
                         f"[{arch}] ERROR: Repository {r['name']} is dirty. Please commit or stash changes before building."
                     )
                     sys.exit(1)
-                subprocess.run(
-                    ["git", "clean", "-fdx", "-e", ".una_config", "-q"],
-                    cwd=r_path,
-                    check=True,
-                )
-                # Ensure submodules are also cleaned to avoid arch-mismatch in static libs (e.g. nsd -> simdzone)
-                if (r_path / ".gitmodules").exists():
-                    try:
-                        subprocess.run(
-                            [
-                                "git",
-                                "submodule",
-                                "foreach",
-                                "--recursive",
-                                "git",
-                                "clean",
-                                "-fdx",
-                                "-e",
-                                ".una_config",
-                            ],
-                            cwd=r_path,
-                            check=True,
-                        )
-                    except subprocess.CalledProcessError:
-                        # Submodules might not be initialized yet, which is fine
-                        pass
-                cleaned_dirs.add(r_path)
-
-            target_triple = get_target_triple(arch)
-            march = get_arch_flags(arch)
-            ld_musl = f"/usr/lib/ld-musl-{arch}.so.1"
-            if arch == "x32":
-                ld_musl = "/usr/lib/ld-musl-x32.so.1"
-            elif arch == "x86_64":
-                ld_musl = "/usr/lib/ld-musl-x86_64.so.1"
-
-            musl_cfg = arch_bld_dir / "musl.cfg"
-            musl_cxx_cfg = arch_bld_dir / "musl_c++.cfg"
-            musl_static_cfg = arch_bld_dir / "musl_static.cfg"
-
-            if (
-                not musl_cfg.exists()
-                or not musl_cxx_cfg.exists()
-                or not musl_static_cfg.exists()
-            ):
-                colors.info(f"[{arch}] Generating compiler configurations...")
-                arch_bld_dir.mkdir(parents=True, exist_ok=True)
-                lld_path = tools_install_dir / "bin" / "ld.lld"
-                lib_p = staging_dir / "usr" / "lib"
-
-                # Common flags (excluding system includes to control order)
-                common_flags = f"--target={target_triple}\n--sysroot={staging_dir}\n-fPIE\n{march}\n"
-
-                # Pure C Config
-                musl_cfg.write_text(
-                    f"{common_flags}-isystem {staging_dir}/usr/include\n-fuse-ld={lld_path}\n-nostdlib\n-L{staging_dir}/usr/lib\n-lc\n-Wl,-dynamic-linker,{ld_musl}\n"
-                )
-
-                # C++ Config (MUST have c++/v1 before usr/include)
-                musl_cxx_cfg.write_text(
-                    f"{common_flags}-isystem {staging_dir}/usr/include/c++/v1\n-isystem {staging_dir}/usr/include\n--ld-path={lld_path}\n-nostdlib\n{lib_p}/Scrt1.o\n{lib_p}/crti.o\n-L{lib_p}\n-lc++\n-lc++abi\n-lunwind\n-lc\n{lib_p}/crtn.o\n-Wl,-dynamic-linker,{ld_musl}\n"
-                )
-
-                # Static Config
-                musl_static_cfg.write_text(
-                    f"{common_flags}-isystem {staging_dir}/usr/include\n-fuse-ld={lld_path}\n-nostdlib\n{lib_p}/Scrt1.o\n{lib_p}/crti.o\n-L{lib_p}\n-lc\n{lib_p}/crtn.o\n-Wl,-dynamic-linker,{ld_musl}\n"
-                )
-
-            cpu_flags = global_cfg.get("cpu_flags", "")
-            os.environ["CFLAGS"] = (
-                f"--config={musl_cfg} -pipe -D_FILE_OFFSET_BITS=64 {cpu_flags}"
-            )
-            os.environ["CXXFLAGS"] = (
-                f"--config={musl_cxx_cfg} -pipe -D_FILE_OFFSET_BITS=64 {cpu_flags}"
-            )
-            os.environ["CFLAGS_STATIC"] = (
-                f"--config={musl_static_cfg} -pipe -D_FILE_OFFSET_BITS=64 {cpu_flags}"
-            )
-            os.environ["CPPFLAGS"] = f"-D_FILE_OFFSET_BITS=64 {cpu_flags}"
-
-            colors.info(f"[{arch}] Building Target Components in Dependency Order")
-            for r in target_configs_to_build:
-                if r.get("is_virtual") or r.get("type") == "virtual":
-                    colors.info(f"[{arch}] Skipping virtual component '{r['name']}'")
-                    continue
-
-                colors.info(f"[{arch}] Processing component: {r['name']}")
-
-                if r["name"] == "linux-image" and "kernel_image" in r:
-                    image_map = r["kernel_image"]
-                    if arch in image_map:
-                        rel_path = image_map[arch]
-                        src_img = Path(r["repo_dir"]) / rel_path
-
-                        kernel_name = global_cfg.get("kernel_name", "kernel")
-                        dest_img = bld_base / kernel_name
-
-                        if src_img.exists():
-                            colors.info(
-                                f"[{arch}] Copying kernel image {src_img} to {dest_img}"
-                            )
-                            shutil.copy(src_img, dest_img)
-
-                            # Copy initfilelist if it exists
-                            init_list_path = Path(r["repo_dir"]) / "initfilelist.txt"
-                            if init_list_path.exists():
-                                dest_init_list = (
-                                    bld_base / f"{kernel_name}.initfilelist.txt"
-                                )
-                                colors.info(
-                                    f"[{arch}] Copying initfilelist {init_list_path} to {dest_init_list}"
-                                )
-                                shutil.copy(init_list_path, dest_init_list)
-                            else:
-                                colors.error(f"[{arch}] Cannot copy {init_list_path}")
-                                sys.exit(1)
-                            # Sync back updated config to source
-                            src_config = Path(r["repo_dir"]) / ".config"
-                            if src_config.exists():
-                                kconfig_path = kwargs.get("kconfig")
-                                print(
-                                    f"[{arch}] Syncing back sanitized updated kernel config to {kconfig_path}"
-                                )
-                                sync_kernel_config(src_config, kconfig_path)
-                        else:
-                            colors.error(
-                                f"[{arch}] Warning: Kernel image not found at {src_img}"
-                            )
-                    else:
-                        print(
-                            f"[{arch}] Warning: No kernel image path defined for this architecture"
-                        )
-
-        # Post-build cleanup for workspace repositories
-        print("\n--- Post-build Workspace Cleanup ---")
-        cleaned_dirs = set()
-        for r in repos:
-            # Skip virtual components that don't have repo_dir
-            if r.get("is_virtual") or r.get("type") == "virtual" or "repo_dir" not in r:
-                continue
-            r_path = Path(r["repo_dir"]).absolute()
-            if r_path in cleaned_dirs:
-                continue
-            if r_path.exists() and (r_path / ".git").exists():
-                print(f"Cleaning {r['name']} ({r['repo_dir']})...")
-                if is_repo_dirty(r_path):
-                    print(
-                        f"ERROR: Repository {r['name']} is dirty. Skipping post-build cleanup for this repo."
-                    )
-                    continue
-                import subprocess
-
-                colors.error(f"[{arch}] GIT CLEAN")
-
+                if is_enabled():
+                    from mod>s.trace import repo_cleaned
+                    repo_cleaned(Path(r_path))
                 subprocess.run(["git", "clean", "-qfdx"], cwd=r_path, check=True)
                 if (r_path / ".gitmodules").exists():
                     try:
@@ -1261,6 +1110,10 @@ def main():
                         f"ERROR: Repository {r['name']} is dirty. Stopping global cleanup."
                     )
                     sys.exit(1)
+                if is_enabled():
+                    from pathlib import Path
+                    from mods.trace import repo_cleaned
+                    repo_cleaned(Path(r_path))
                 subprocess.run(["git", "clean", "-fdx", "-q"], cwd=r_path, check=True)
                 cleaned_dirs.add(r_path)
 
