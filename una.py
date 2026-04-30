@@ -1098,10 +1098,10 @@ def main():
                             shutil.copy(src_img, dest_img)
 
                             # Copy initfilelist if it exists
-                            init_list_path = Path(r["repo_dir"]) / "initfilelist.txt"
+                                init_list_path = Path(r["repo_dir"]) / "initfilelist.txt"
                             if init_list_path.exists():
                                 dest_init_list = (
-                                    bld_base / f"{kernel_name}.initfilelist.txt"
+                                bld_base / f"{kernel_name}.initfilelist.txt"
                                 )
                                 colors.info(
                                     f"[{arch}] Copying initfilelist {init_list_path} to {dest_init_list}"
