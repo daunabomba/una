@@ -405,6 +405,15 @@ def run_build(args):
                     else:
                         print(f"[{arch}] Warning: Kernel image not found at {src_img}")
 
+                    # Copy initfilelist with .txt extension
+                    src_initfilelist = Path(r["repo_dir"]) / "initfilelist"
+                    dest_initfilelist = bld_base / f"{kernel_name}.txt"
+                    if src_initfilelist.exists():
+                        print(f"[{arch}] Copying initfilelist to {dest_initfilelist}")
+                        shutil.copy(src_initfilelist, dest_initfilelist)
+                    else:
+                        print(f"[{arch}] Warning: initfilelist not found at {src_initfilelist}")
+
                     # Sync back updated config to source
                     src_config = Path(r["repo_dir"]) / ".config"
                     if src_config.exists():
@@ -435,7 +444,7 @@ def run_build(args):
                     f"ERROR: Repository {r['name']} is dirty. Skipping post-build cleanup for this repo."
                 )
                 continue
-            subprocess.run(["git", "clean", "-fdx"], cwd=r_path, check=True)
+            subprocess.run(["git", "clean", "-qfdx"], cwd=r_path, check=True)
             if (r_path / ".gitmodules").exists():
                 try:
                     subprocess.run(
@@ -446,7 +455,7 @@ def run_build(args):
                             "--recursive",
                             "git",
                             "clean",
-                            "-fdx",
+                            "-qfdx",
                         ],
                         cwd=r_path,
                         check=True,
