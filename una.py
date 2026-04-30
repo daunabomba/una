@@ -561,8 +561,10 @@ def main():
 
     keep_repo_dirs = get_keep_dirs(repos_config, dep_graph, config_components)
     
+    repos_to_sync = {r["name"] for r in filtered_repos}
+
     for cfg in repos_config:
-        if cfg.get("is_virtual") or cfg["name"] not in required_names:
+        if cfg.get("is_virtual") or cfg["name"] not in repos_to_sync:
             continue
         if 'repo_dir' not in cfg:
             continue
@@ -571,8 +573,13 @@ def main():
             save_repo_state(cfg)
 
     # Cleanup AFTER sync - remove repos not in current config
-    # Use keep_repo_dirs built earlier
-    valid_repo_dirs = keep_repo_dirs
+    # First, add any newly synced repos to valid dirs
+    valid_repo_dirs = keep_repo_dirs.copy()
+    for cfg in repos_config:
+        if cfg.get("is_virtual") or 'repo_dir' not in cfg:
+            continue
+        if cfg["name"] in repos_to_sync:
+            valid_repo_dirs.add(Path(cfg["repo_dir"]).absolute())
     
     # Remove repos from scanned list that are not in valid_repo_dirs
     scanned = scan_repos()
