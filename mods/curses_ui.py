@@ -118,8 +118,11 @@ class CursesUI:
 
         # Start build in background thread
         if self.build_func:
-            # build_func is a closure, call it directly
-            self.build_thread = threading.Thread(target=self.build_func)
+            # Call build_func with saved args
+            args_tuple, kwargs_dict = self.build_args
+            self.build_thread = threading.Thread(
+                target=lambda: self.build_func(*args_tuple, **kwargs_dict)
+            )
             self.build_thread.daemon = True
             self.build_thread.start()
 
