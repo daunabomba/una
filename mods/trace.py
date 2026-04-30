@@ -31,6 +31,22 @@ def _write(msg: str) -> None:
             f.write(f"[{timestamp}] {msg}\n")
 
 
+def trace_deps(build_order: list, dep_graph: dict) -> None:
+    """Log the dependency graph and build order."""
+    if not _trace_file:
+        return
+    _write("=== DEPENDENCY GRAPH ===")
+    for name, deps in dep_graph.items():
+        if deps:
+            _write(f"  {name} -> depends on: {', '.join(deps)}")
+        else:
+            _write(f"  {name} -> (no dependencies)")
+    _write("=== BUILD ORDER ===")
+    for i, name in enumerate(build_order, 1):
+        _write(f"  {i}. {name}")
+    _write("=== END DEPENDENCY INFO ===")
+
+
 def repo_created(name: str, repo_dir: Path) -> None:
     """Log repo creation."""
     _write(f"REPO CREATED: {name} -> {repo_dir}")
