@@ -20,6 +20,7 @@ from mods.utils import (
     get_target_triple,
     get_arch_flags,
     TqdmProgress,
+    is_repo_dirty,
 )
 from mods.snapshot import (
     take_snapshot,
@@ -260,20 +261,6 @@ class StepRunner:
 
         if is_enabled():
             build_step_end(self.arch, name, step_name)
-
-
-def is_repo_dirty(repo_path: Path):
-    """
-    Check if a git repository has any modified or untracked files.
-    """
-    import subprocess
-
-    if not (repo_path / ".git").exists():
-        return False
-    result = subprocess.run(
-        ["git", "status", "--porcelain"], cwd=repo_path, capture_output=True, text=True
-    )
-    return len(result.stdout.strip()) > 0
 
 
 def sync_kernel_config(src: Path, dest: Path):

@@ -2,6 +2,7 @@ from git import Repo, RemoteProgress
 import shutil
 import os
 import sys
+from pathlib import Path
 from tqdm import tqdm
 from mods import colors
 from mods.trace import is_enabled, repo_synced, repo_created, repo_removed
@@ -389,6 +390,20 @@ def get_kernel_arch(arch: str) -> str:
     return {"x32": "x86", "x86_64": "x86", "aarch64": "arm64", "riscv64": "riscv"}.get(
         arch, "x86"
     )
+
+
+def is_repo_dirty(repo_path: Path):
+    """
+    Check if a git repository has any modified or untracked files.
+    """
+    import subprocess
+
+    if not (repo_path / ".git").exists():
+        return False
+    result = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=repo_path, capture_output=True, text=True
+    )
+    return len(result.stdout.strip()) > 0
 
 
 def get_cross_prefix(arch: str) -> str:
