@@ -59,13 +59,8 @@ class Writer:
 
     def write(self, text):
         with self.lock:
-            # Strip carriage returns to prevent garbled output (overwriting lines)
-            try:
-                text = text.replace('\r', '')
-            except Exception:
-                pass
-            # Remove control characters (non-CSI control bytes)
-            text = self.CONTROL_RE.sub("", text)
+            # Remove control characters except \r (needed for carriage return handling)
+            text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1a\x1c-\x1f\x7f]", "", text)
 
             # Protect SGR (\x1b[...m) sequences, strip all other CSI/ESC, then restore SGR
             try:
@@ -94,9 +89,9 @@ class Writer:
                 except Exception:
                     pass
 
-                # Remove incomplete ANSI sequences (ESC was already stripped, leaving '[Digits' at end of text)
+                # Remove isolated '[' only if it's at the very end (incomplete CSI sequence)
                 try:
-                    t = re.sub(r"\[[0-9;?]+\Z", "", t)
+                    t = re.sub(r"\[\Z", "", t)
                 except Exception:
                     pass
 
@@ -128,7 +123,7 @@ class Writer:
 
                 buf = ""
 
-                def flush_buf(y, buf, attr):
+                def flush_buf(_y, buf, attr):
                     try:
                         if not buf:
                             return
@@ -138,68 +133,24 @@ class Writer:
                             if line:
                                 truncated = line[: max(w - 1, 0)]
                                 try:
-                                    # write at current cursor (let curses update cursor)
-                                    try:
-                                        self.win.addstr(truncated, attr)
-                                    except TypeError:
-                                        # some curses implementations expect (y,x,str,attr), fallback
-                                        try:
-                                            y_cur, x_cur = self.win.getyx()
-                                            self.win.addstr(y_cur, 0, truncated, attr)
-                                        except Exception:
-                                            self.win.addstr(y_cur, 0, truncated)
-                                    try:
-                                        self.win.clrtoeol()
-                                    except Exception:
-                                        pass
+                                    self.win.addstr(y, 0, truncated, attr)
+                                    self.win.clrtoeol()
                                 except Exception:
-                                    try:
-                                        # fallback to coordinates
-                                        self.win.addstr(y, 0, truncated)
-                                        self.win.clrtoeol()
-                                    except Exception:
-                                        pass
-                                # Move to next line based on the line we just wrote
+                                    pass
+                            # Always advance to next line after \n (whether line had content or was empty)
+                            y, x = self.win.getyx()
+                            next_line = y + 1
+                            if next_line < h:
                                 try:
-                                    y_cur, x_cur = self.win.getyx()
+                                    self.win.move(next_line, 0)
                                 except Exception:
-                                    y_cur = y
-                                try:
-                                    next_line = y_cur + 1
-                                except Exception:
-                                    next_line = y + 1
-                                if next_line < h:
-                                    try:
-                                        self.win.move(next_line, 0)
-                                    except Exception:
-                                        pass
-                                else:
-                                    try:
-                                        self.win.scroll()
-                                        self.win.move(max(h - 2, 0), 0)
-                                    except Exception:
-                                        pass
+                                    pass
                             else:
-                                # Empty line: advance based on current cursor
                                 try:
-                                    y_cur, x_cur = self.win.getyx()
+                                    self.win.scroll()
+                                    self.win.move(h - 1, 0)
                                 except Exception:
-                                    y_cur = y
-                                try:
-                                    next_line = y_cur + 1
-                                except Exception:
-                                    next_line = y + 1
-                                if next_line < h:
-                                    try:
-                                        self.win.move(next_line, 0)
-                                    except Exception:
-                                        pass
-                                else:
-                                    try:
-                                        self.win.scroll()
-                                        self.win.move(max(h - 2, 0), 0)
-                                    except Exception:
-                                        pass
+                                    pass
                     except Exception:
                         pass
 
@@ -439,35 +390,46 @@ class CursesUI:
                                 f.seek(last_pos)
                                 data = f.read()
                                 if data:
-                                    # Line endings should already be normalized to \n by AsyncLogWriter
-                                    # but we handle any edge cases
+                                    # Normalize \r\n to \n, but preserve standalone \r for cursor positioning
                                     try:
-                                        data = data.replace('\r\n', '\n').replace('\r', '\n')
+                                        data = data.replace('\r\n', '\n')
                                     except Exception:
                                         pass
                                     # Strip ANSI/terminal control sequences for bottom pane
                                     clean = CSI_RE.sub("", data)
                                     clean = ESC_TWO_RE.sub("", clean)
                                     clean = ESC_CHAR_RE.sub("", clean)
-                                    clean = CONTROL_RE_PLAIN.sub("", clean)
+                                    # Remove control chars except \r and \n
+                                    clean = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1a\x1c-\x1f\x7f]", "", clean)
                                     with self.lock:
                                         h, w = self.bottom.getmaxyx()
 
-                                        for line in clean.split("\n"):
+                                        # Process text handling \r by moving cursor to column 0
+                                        lines = clean.split("\n")
+                                        for line in lines:
                                             y, x = self.bottom.getyx()
 
-                                            if line:
-                                                truncated = line[: w - 1]
-                                                try:
-                                                    self.bottom.addstr(y, 0, truncated)
-                                                    self.bottom.clrtoeol()
-                                                except Exception:
+                                            # Split by \r and write each segment
+                                            parts = line.split('\r')
+
+                                            for i, part in enumerate(parts):
+                                                if i > 0:
+                                                    # \r moves cursor to column 0 on same line
+                                                    self.bottom.move(y, 0)
+
+                                                if part:
+                                                    truncated = part[: w - 1]
                                                     try:
                                                         self.bottom.addstr(y, 0, truncated)
+                                                        self.bottom.clrtoeol()
                                                     except Exception:
-                                                        pass
+                                                        try:
+                                                            self.bottom.addstr(y, 0, truncated)
+                                                        except Exception:
+                                                            pass
 
-                                            # Move to next line
+                                            # Move to next line after processing all \r-separated parts
+                                            y, x = self.bottom.getyx()
                                             if y < h - 1:
                                                 self.bottom.move(y + 1, 0)
                                             else:
