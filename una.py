@@ -211,6 +211,10 @@ class StepRunner:
                                 # If writing to the curses writer fails, skip writing to terminal
                                 # to avoid emitting raw escape sequences outside curses.
                                 pass
+                        try:
+                            self.q.task_done()
+                        except Exception:
+                            pass
                     try:
                         if hasattr(self.logfile, 'flush'):
                             self.logfile.flush()
@@ -219,6 +223,12 @@ class StepRunner:
                 def put(self, txt):
                     try:
                         self.q.put(txt)
+                    except Exception:
+                        pass
+                def flush(self):
+                    """Wait for all queued items to be processed."""
+                    try:
+                        self.q.join()
                     except Exception:
                         pass
                 def stop(self):
@@ -244,7 +254,10 @@ class StepRunner:
                         pass
                     return len(txt)
                 def flush(self):
-                    pass
+                    try:
+                        self.aw.flush()
+                    except Exception:
+                        pass
 
             sys.stdout = StdoutReplacer(async_top_writer)
             sys.stderr = sys.stdout

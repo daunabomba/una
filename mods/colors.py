@@ -14,7 +14,7 @@ def _color(text, color_code, bold=False):
 
 def info(msg):
     """Bright green for informative messages about what stage is being run."""
-    print(_color(msg, "92", bold=True))
+    print(_color(f"[{msg}", "92", bold=True))
 
 
 def warn(msg):
