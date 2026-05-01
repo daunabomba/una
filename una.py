@@ -152,15 +152,71 @@ class StepRunner:
         original_stdout_fd = os.dup(1)
         original_stderr_fd = os.dup(2)
 
+        # Save Python-level sys.stdout/stderr objects so they can be restored
+        old_sys_stdout = sys.stdout
+        old_sys_stderr = sys.stderr
+
         # Open log file
         log_file = open(log_file_path, "w")
 
         # Create a pipe for capturing output
         pipe_read, pipe_write = os.pipe()
 
-        # Redirect stdout and stderr to the pipe
+        # Redirect stdout and stderr (FD-level) to the pipe
         os.dup2(pipe_write, 1)
         os.dup2(pipe_write, 2)
+
+        # Rebind Python-level sys.stdout/stderr to a Tee so Python prints go to both the
+        # original sys.stdout (usually the curses Writer) and the pipe (so reader can log)
+        try:
+            import io
+
+            # Create a text wrapper around FD 1 (which now points to the pipe)
+            dup_fd = os.dup(1)
+            # Instead of sending Python prints into the pipe (risking blocking),
+            # construct a Tee that writes to the log file and the original stdout (Writer).
+            class Tee:
+                def __init__(self, a, logfile):
+                    self.a = a  # original sys.stdout (Writer)
+                    self.logfile = logfile  # Python file object for logs
+                def write(self, txt):
+                    last_exc = None
+                    # Write to log file first (non-blocking disk write expected)
+                    try:
+                        if hasattr(self.logfile, 'write'):
+                            self.logfile.write(txt)
+                            try:
+                                self.logfile.flush()
+                            except Exception:
+                                pass
+                    except Exception as e:
+                        last_exc = e
+                    # Then write to original stdout (may acquire writer lock)
+                    try:
+                        if hasattr(self.a, 'write'):
+                            self.a.write(txt)
+                    except Exception:
+                        if last_exc is not None:
+                            # both failed
+                            raise
+                    return len(txt)
+                def flush(self):
+                    try:
+                        if hasattr(self.logfile, 'flush'):
+                            self.logfile.flush()
+                    except Exception:
+                        pass
+                    try:
+                        if hasattr(self.a, 'flush'):
+                            self.a.flush()
+                    except Exception:
+                        pass
+            tee = Tee(old_sys_stdout, log_file)
+            sys.stdout = tee
+            sys.stderr = tee
+        except Exception:
+            # If we can't rebind, continue — reader will capture subprocess output
+            pass
 
         # Buffer for output data
         output_buffer = []
@@ -181,12 +237,12 @@ class StepRunner:
                         # Prefer writing directly to curses Writer window if present
                         written_to_curses = False
                         try:
-                            sd = sys.stdout
-                            # If sys.stdout looks like the Writer (has win and lock), write directly
+                            # Use the original sys.stdout object captured earlier (old_sys_stdout)
+                            sd = old_sys_stdout
+                            # If sd looks like the Writer (has win and lock), let it handle ANSI and scrolling
                             if hasattr(sd, 'write') and hasattr(sd, 'win') and hasattr(sd, 'lock'):
                                 try:
                                     text = data.decode('utf-8', errors='replace')
-                                    # Let the Writer handle ANSI and scrolling
                                     sd.write(text)
                                     try:
                                         sd.flush()
@@ -197,16 +253,17 @@ class StepRunner:
                                     written_to_curses = False
                             else:
                                 # Fallback: attempt safe sys.stdout.write
+                                sd2 = sys.stdout
                                 try:
                                     fil = None
                                     try:
-                                        fil = sd.fileno()
+                                        fil = sd2.fileno()
                                     except Exception:
                                         fil = None
                                     if fil is not None and fil == pipe_write:
                                         raise Exception('stdout is pipe')
-                                    sd.write(data.decode('utf-8', errors='replace'))
-                                    sd.flush()
+                                    sd2.write(data.decode('utf-8', errors='replace'))
+                                    sd2.flush()
                                 except Exception:
                                     os.write(original_stdout_fd, data)
                         except Exception:
@@ -300,6 +357,17 @@ class StepRunner:
                 reader.join()
             except Exception:
                 pass
+
+            # Restore Python-level stdout/stderr if we changed them
+            try:
+                # If we set sys.stdout to a Tee or pipe wrapper, restore originals
+                if 'old_sys_stdout' in locals() and old_sys_stdout is not None:
+                    sys.stdout = old_sys_stdout
+                if 'old_sys_stderr' in locals() and old_sys_stderr is not None:
+                    sys.stderr = old_sys_stderr
+            except Exception:
+                pass
+
 
             # Restore original file descriptors
             try:
