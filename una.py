@@ -348,6 +348,10 @@ class StepRunner:
             # Start reader thread (non-daemon so we can join reliably)
             reader = threading.Thread(target=reader_thread, daemon=False)
             reader.start()
+        else:
+            # When not using pipe capture, redirect FD-level stdout/stderr to log file
+            os.dup2(log_file.fileno(), 1)
+            os.dup2(log_file.fileno(), 2)
 
         try:
             # Execute the step function
@@ -376,6 +380,13 @@ class StepRunner:
                         reader.join()
                     except Exception:
                         pass
+            else:
+                # Restore original file descriptors (from non-pipe-capture case)
+                try:
+                    os.dup2(original_stdout_fd, 1)
+                    os.dup2(original_stderr_fd, 2)
+                except Exception:
+                    pass
 
             # Restore Python-level stdout/stderr if we changed them
             try:
@@ -876,14 +887,31 @@ def main():
 
     repos_to_sync = {r["name"] for r in filtered_repos}
 
+    # Prepare git log directory for pre-build git operations
+    git_logs_dir = bld_base / "git_logs"
+    git_logs_dir.mkdir(parents=True, exist_ok=True)
+
     for cfg in repos_config:
         if cfg.get("is_virtual") or cfg["name"] not in repos_to_sync:
             continue
         if "repo_dir" not in cfg:
             continue
 
-        if sync_repo(cfg, una_base):
-            save_repo_state(cfg)
+        # Redirect git output to component_git_pre.txt
+        git_log_file = git_logs_dir / f"{cfg['name']}_git_pre.txt"
+        original_stdout_fd = os.dup(1)
+        original_stderr_fd = os.dup(2)
+        try:
+            with open(git_log_file, "w") as f:
+                os.dup2(f.fileno(), 1)
+                os.dup2(f.fileno(), 2)
+                if sync_repo(cfg, una_base):
+                    save_repo_state(cfg)
+        finally:
+            os.dup2(original_stdout_fd, 1)
+            os.dup2(original_stderr_fd, 2)
+            os.close(original_stdout_fd)
+            os.close(original_stderr_fd)
 
     # Cleanup AFTER sync - remove repos not in current config
     # First, add any newly synced repos to valid dirs
@@ -965,6 +993,10 @@ def main():
                 from mods.curses_ui import CursesUI
                 from mods.build import init_build, run_build
 
+                # Prepare git log directory for pre-build git operations
+                git_logs_dir = bld_base / "git_logs"
+                git_logs_dir.mkdir(parents=True, exist_ok=True)
+
                 # Initialize build module
                 init_build(
                     colors,
@@ -985,6 +1017,8 @@ def main():
                     tools_install_dir,
                     skel_dir,
                     global_cfg,
+                    use_curses,
+                    git_logs_dir,
                 )
                 # Determine log_dir from conf name
                 conf_name = Path(conf_files[0]).stem
@@ -1050,6 +1084,7 @@ def main():
             skel_dir,
             global_cfg,
             use_curses,
+            git_logs_dir,
         )
         run_build(args)
         return
@@ -1211,24 +1246,40 @@ def main():
                 if is_enabled():
                     from mods.trace import repo_cleaned
                     repo_cleaned(Path(r_path))
-                subprocess.run(["git", "clean", "-qfdx"], cwd=r_path, check=True)
-                if (r_path / ".gitmodules").exists():
-                    try:
-                        subprocess.run(
-                            [
-                                "git",
-                                "submodule",
-                                "foreach",
-                                "--recursive",
-                                "git",
-                                "clean",
-                                "-qfdx",
-                            ],
-                            cwd=r_path,
-                            check=True,
-                        )
-                    except subprocess.CalledProcessError:
-                        pass
+                
+                # Redirect git clean output to component_git_pre.txt
+                git_logs_dir = bld_base / "git_logs"
+                git_logs_dir.mkdir(parents=True, exist_ok=True)
+                git_log_file = git_logs_dir / f"{r['name']}_git_pre.txt"
+                original_stdout_fd = os.dup(1)
+                original_stderr_fd = os.dup(2)
+                try:
+                    with open(git_log_file, "a") as f:
+                        os.dup2(f.fileno(), 1)
+                        os.dup2(f.fileno(), 2)
+                        subprocess.run(["git", "clean", "-qfdx"], cwd=r_path, check=True)
+                        if (r_path / ".gitmodules").exists():
+                            try:
+                                subprocess.run(
+                                    [
+                                        "git",
+                                        "submodule",
+                                        "foreach",
+                                        "--recursive",
+                                        "git",
+                                        "clean",
+                                        "-qfdx",
+                                    ],
+                                    cwd=r_path,
+                                    check=True,
+                                )
+                            except subprocess.CalledProcessError:
+                                pass
+                finally:
+                    os.dup2(original_stdout_fd, 1)
+                    os.dup2(original_stderr_fd, 2)
+                    os.close(original_stdout_fd)
+                    os.close(original_stderr_fd)
                 cleaned_dirs.add(r_path)
         # End of build process
         return True

@@ -391,6 +391,7 @@ class CursesUI:
                             with open(cur, "r") as f:
                                 f.seek(last_pos)
                                 data = f.read()
+                                data = None
                                 if data:
                                     # Normalize \r\n to \n, but preserve standalone \r for cursor positioning
                                     try:

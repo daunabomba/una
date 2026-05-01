@@ -8,6 +8,7 @@ import subprocess
 import json
 import shutil
 from pathlib import Path
+import contextlib
 
 from mods.trace import (
     is_enabled,
@@ -37,6 +38,25 @@ build_all = None
 tools_install_dir = None
 skel_dir = None
 global_cfg = None
+git_logs_dir = None
+
+
+@contextlib.contextmanager
+def redirect_git_output(log_file_path):
+    """Context manager to redirect stdout/stderr to a git log file."""
+    original_stdout_fd = os.dup(1)
+    original_stderr_fd = os.dup(2)
+    try:
+        log_file = open(log_file_path, "w")
+        os.dup2(log_file.fileno(), 1)
+        os.dup2(log_file.fileno(), 2)
+        yield
+    finally:
+        log_file.close()
+        os.dup2(original_stdout_fd, 1)
+        os.dup2(original_stderr_fd, 2)
+        os.close(original_stdout_fd)
+        os.close(original_stderr_fd)
 
 
 def init_build(
@@ -59,12 +79,13 @@ def init_build(
     skel_dir_val,
     global_cfg_val,
     use_curses_val=False,
+    git_logs_dir_val=None,
 ):
     """Initialize the build module with required functions and variables."""
     global colors, load_repo_una, StepRunner, get_target_triple
     global get_arch_flags, propagate_skel, sync_kernel_config, is_repo_dirty
     global BASE_DIR, bld_base, arches, repos, repos_to_process
-    global required_names, build_all, tools_install_dir, skel_dir, global_cfg, use_curses
+    global required_names, build_all, tools_install_dir, skel_dir, global_cfg, use_curses, git_logs_dir
 
     colors = colors_mod
     load_repo_una = load_repo_una_func
@@ -85,6 +106,7 @@ def init_build(
     skel_dir = skel_dir_val
     global_cfg = global_cfg_val
     use_curses = use_curses_val
+    git_logs_dir = git_logs_dir_val
 
 
 def run_build(args):
@@ -167,16 +189,38 @@ def run_build(args):
 
     if tools_to_build:
         colors.info("\n--- Tools Stage ---")
+        # Create build_logs directory for tools
+        tools_build_logs_dir = bld_base / "tools" / "build_logs"
+        tools_build_logs_dir.mkdir(parents=True, exist_ok=True)
+        
         if is_enabled():
             tools_step_start("tools_configure")
         for r in tools_to_build:
+            colors.info(f"Building tool: {r['name']}")
             module = load_repo_una(r["repo_dir"], r.get("una_file", "una.py"))
-            if hasattr(module, "tools_configure"):
-                module.tools_configure(tools_install_dir, arches=get_all_arches())
-            if hasattr(module, "tools_build"):
-                module.tools_build(tools_install_dir)
-            if hasattr(module, "tools_install"):
-                module.tools_install(tools_install_dir)
+            
+            # Redirect tool build output to log file
+            log_file_path = tools_build_logs_dir / f"{r['name']}.txt"
+            colors.info(f"Tool log: {log_file_path}")
+            
+            original_stdout_fd = os.dup(1)
+            original_stderr_fd = os.dup(2)
+            try:
+                with open(log_file_path, "w") as log_file:
+                    os.dup2(log_file.fileno(), 1)
+                    os.dup2(log_file.fileno(), 2)
+                    if hasattr(module, "tools_configure"):
+                        module.tools_configure(tools_install_dir, arches=get_all_arches())
+                    if hasattr(module, "tools_build"):
+                        module.tools_build(tools_install_dir)
+                    if hasattr(module, "tools_install"):
+                        module.tools_install(tools_install_dir)
+            finally:
+                os.dup2(original_stdout_fd, 1)
+                os.dup2(original_stderr_fd, 2)
+                os.close(original_stdout_fd)
+                os.close(original_stderr_fd)
+        
         if is_enabled():
             tools_step_end("tools_configure")
         new_state = {
@@ -446,24 +490,57 @@ def run_build(args):
                     f"ERROR: Repository {r['name']} is dirty. Skipping post-build cleanup for this repo."
                 )
                 continue
-            subprocess.run(["git", "clean", "-qfdx"], cwd=r_path, check=True)
-            if (r_path / ".gitmodules").exists():
+            # Redirect git output to component_git_post.txt
+            if git_logs_dir:
+                git_log_file = git_logs_dir / f"{r['name']}_git_post.txt"
+                original_stdout_fd = os.dup(1)
+                original_stderr_fd = os.dup(2)
                 try:
-                    subprocess.run(
-                        [
-                            "git",
-                            "submodule",
-                            "foreach",
-                            "--recursive",
-                            "git",
-                            "clean",
-                            "-qfdx",
-                        ],
-                        cwd=r_path,
-                        check=True,
-                    )
-                except subprocess.CalledProcessError:
-                    pass
+                    with open(git_log_file, "w") as f:
+                        os.dup2(f.fileno(), 1)
+                        os.dup2(f.fileno(), 2)
+                        subprocess.run(["git", "clean", "-qfdx"], cwd=r_path, check=True)
+                        if (r_path / ".gitmodules").exists():
+                            try:
+                                subprocess.run(
+                                    [
+                                        "git",
+                                        "submodule",
+                                        "foreach",
+                                        "--recursive",
+                                        "git",
+                                        "clean",
+                                        "-qfdx",
+                                    ],
+                                    cwd=r_path,
+                                    check=True,
+                                )
+                            except subprocess.CalledProcessError:
+                                pass
+                finally:
+                    os.dup2(original_stdout_fd, 1)
+                    os.dup2(original_stderr_fd, 2)
+                    os.close(original_stdout_fd)
+                    os.close(original_stderr_fd)
+            else:
+                subprocess.run(["git", "clean", "-qfdx"], cwd=r_path, check=True)
+                if (r_path / ".gitmodules").exists():
+                    try:
+                        subprocess.run(
+                            [
+                                "git",
+                                "submodule",
+                                "foreach",
+                                "--recursive",
+                                "git",
+                                "clean",
+                                "-qfdx",
+                            ],
+                            cwd=r_path,
+                            check=True,
+                        )
+                    except subprocess.CalledProcessError:
+                        pass
             cleaned_dirs.add(r_path)
 
     # End of build process
