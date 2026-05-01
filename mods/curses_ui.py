@@ -21,9 +21,18 @@ class Writer:
     def __init__(self, win, lock):
         self.win = win
         self.lock = lock
-        # Start at line 2 (after header)
-        self.win.move(2, 0)
-        self.win.refresh()
+        # Start at line 2 (after header) if window tall enough, otherwise put at last line
+        try:
+            h, w = self.win.getmaxyx()
+            start_line = 2 if h > 2 else max(0, h - 1)
+            self.win.move(start_line, 0)
+            self.win.refresh()
+        except Exception:
+            try:
+                self.win.move(0, 0)
+                self.win.refresh()
+            except Exception:
+                pass
 
     def write(self, text):
         with self.lock:
@@ -113,32 +122,62 @@ class CursesUI:
         curses.cbreak()
         stdscr.keypad(True)
         curses.start_color()
-        curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLACK)
-        curses.init_pair(2, curses.COLOR_CYAN, curses.COLOR_BLACK)
+        has_colors = curses.has_colors()
+        if has_colors:
+            try:
+                curses.use_default_colors()
+            except Exception:
+                pass
+            curses.init_pair(1, curses.COLOR_GREEN, -1)
+            curses.init_pair(2, curses.COLOR_CYAN, -1)
+            color1 = curses.color_pair(1)
+            color2 = curses.color_pair(2)
+        else:
+            color1 = 0
+            color2 = 0
 
         self.h, self.w = stdscr.getmaxyx()
 
-        # Calculate window heights - split 50/50
-        top_h = self.h // 2
-        bot_h = self.h - top_h
+        # Calculate window heights - split with a 1-line separator
+        min_h = 3
+        sep_h = 1
+        top_h = max(min_h, self.h // 2)
+        bot_h = self.h - top_h - sep_h
+        if bot_h < min_h:
+            top_h = max(min_h, self.h - sep_h - min_h)
+            bot_h = self.h - top_h - sep_h
+        if bot_h < 1:
+            bot_h = max(1, self.h - top_h - sep_h)
 
-        # Create windows
+        # Create windows with a separator row between them
         self.top = curses.newwin(top_h, self.w, 0, 0)
-        self.bottom = curses.newwin(bot_h, self.w, top_h, 0)
+        # Separator will be drawn on stdscr at row = top_h
+        self.bottom = curses.newwin(bot_h, self.w, top_h + sep_h, 0)
 
         self.top.scrollok(True)
         self.bottom.scrollok(True)
 
-        # Draw headers on top window
-        self.top.addstr(0, 0, "=== Una Output ===", curses.A_BOLD | curses.color_pair(1))
-        self.top.hline(1, 0, curses.ACS_HLINE, self.w)
+        # Draw header on top window
+        try:
+            self.top.addstr(0, 0, "=== Una Output ===", curses.A_BOLD | color1)
+            self.top.hline(1, 0, curses.ACS_HLINE, self.w)
+        except Exception:
+            pass
         self.top.refresh()
 
+        # Draw separator line on the root window
+        try:
+            stdscr.hline(top_h, 0, curses.ACS_HLINE, self.w)
+            stdscr.refresh()
+        except Exception:
+            pass
+
         # Draw headers on bottom window
-        self.bottom.addstr(
-            0, 0, "=== Build Logs ===", curses.A_BOLD | curses.color_pair(2)
-        )
-        self.bottom.hline(1, 0, curses.ACS_HLINE, self.w)
+        try:
+            self.bottom.addstr(0, 0, "=== Build Logs ===", curses.A_BOLD | color2)
+            self.bottom.hline(1, 0, curses.ACS_HLINE, self.w)
+        except Exception:
+            pass
         self.bottom.refresh()
 
         self.running = True
