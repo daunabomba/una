@@ -99,14 +99,18 @@ class Writer:
                                         self.win.clrtoeol()
                                     except Exception:
                                         pass
-                                # Move to next line (use current y)
+                                # Move to next line based on the line we just wrote
                                 try:
-                                    y_new, x_new = self.win.getyx()
+                                    y_cur, x_cur = self.win.getyx()
                                 except Exception:
-                                    y_new = y
-                                if y_new < h - 1:
+                                    y_cur = y
+                                try:
+                                    next_line = y_cur + 1
+                                except Exception:
+                                    next_line = y + 1
+                                if next_line < h:
                                     try:
-                                        self.win.move(y_new + 1, 0)
+                                        self.win.move(next_line, 0)
                                     except Exception:
                                         pass
                                 else:
@@ -116,14 +120,18 @@ class Writer:
                                     except Exception:
                                         pass
                             else:
-                                # Empty line
+                                # Empty line: advance based on current cursor
                                 try:
-                                    y_new, x_new = self.win.getyx()
+                                    y_cur, x_cur = self.win.getmaxyx()
                                 except Exception:
-                                    y_new = y
-                                if y_new < h - 1:
+                                    y_cur = y
+                                try:
+                                    next_line = y + 1
+                                except Exception:
+                                    next_line = y + 1
+                                if next_line < h:
                                     try:
-                                        self.win.move(y_new + 1, 0)
+                                        self.win.move(next_line, 0)
                                     except Exception:
                                         pass
                                 else:
