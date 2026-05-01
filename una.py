@@ -183,49 +183,15 @@ class StepRunner:
                         try:
                             sd = sys.stdout
                             # If sys.stdout looks like the Writer (has win and lock), write directly
-                            if hasattr(sd, 'win') and hasattr(sd, 'lock'):
+                            if hasattr(sd, 'write') and hasattr(sd, 'win') and hasattr(sd, 'lock'):
                                 try:
                                     text = data.decode('utf-8', errors='replace')
-                                    with sd.lock:
-                                        try:
-                                            h, w = sd.win.getmaxyx()
-                                        except Exception:
-                                            h, w = (0, 0)
-                                        # naive split lines and write
-                                        for line in text.split('\n'):
-                                            try:
-                                                y, x = sd.win.getyx()
-                                            except Exception:
-                                                y, x = (0, 0)
-                                            if line:
-                                                truncated = line[: max(w - 1, 0)]
-                                                try:
-                                                    sd.win.addstr(y, 0, truncated)
-                                                    sd.win.clrtoeol()
-                                                except Exception:
-                                                    pass
-                                                # Move to next line
-                                                try:
-                                                    if y < h - 1:
-                                                        sd.win.move(y + 1, 0)
-                                                    else:
-                                                        sd.win.scroll()
-                                                        sd.win.move(max(h - 2, 0), 0)
-                                                except Exception:
-                                                    pass
-                                            else:
-                                                try:
-                                                    if y < h - 1:
-                                                        sd.win.move(y + 1, 0)
-                                                    else:
-                                                        sd.win.scroll()
-                                                        sd.win.move(max(h - 2, 0), 0)
-                                                except Exception:
-                                                    pass
-                                        try:
-                                            sd.win.refresh()
-                                        except Exception:
-                                            pass
+                                    # Let the Writer handle ANSI and scrolling
+                                    sd.write(text)
+                                    try:
+                                        sd.flush()
+                                    except Exception:
+                                        pass
                                     written_to_curses = True
                                 except Exception:
                                     written_to_curses = False
@@ -270,47 +236,14 @@ class StepRunner:
                     # Drain remaining data; use same direct-to-curses logic as above
                     try:
                         sd = sys.stdout
-                        if hasattr(sd, 'win') and hasattr(sd, 'lock'):
+                        if hasattr(sd, 'write') and hasattr(sd, 'win') and hasattr(sd, 'lock'):
                             try:
                                 text = data.decode('utf-8', errors='replace')
-                                with sd.lock:
-                                    try:
-                                        h, w = sd.win.getmaxyx()
-                                    except Exception:
-                                        h, w = (0, 0)
-                                    for line in text.split('\n'):
-                                        try:
-                                            y, x = sd.win.getyx()
-                                        except Exception:
-                                            y, x = (0, 0)
-                                        if line:
-                                            truncated = line[: max(w - 1, 0)]
-                                            try:
-                                                sd.win.addstr(y, 0, truncated)
-                                                sd.win.clrtoeol()
-                                            except Exception:
-                                                pass
-                                            try:
-                                                if y < h - 1:
-                                                    sd.win.move(y + 1, 0)
-                                                else:
-                                                    sd.win.scroll()
-                                                    sd.win.move(max(h - 2, 0), 0)
-                                            except Exception:
-                                                pass
-                                        else:
-                                            try:
-                                                if y < h - 1:
-                                                    sd.win.move(y + 1, 0)
-                                                else:
-                                                    sd.win.scroll()
-                                                    sd.win.move(max(h - 2, 0), 0)
-                                            except Exception:
-                                                pass
-                                    try:
-                                        sd.win.refresh()
-                                    except Exception:
-                                        pass
+                                sd.write(text)
+                                try:
+                                    sd.flush()
+                                except Exception:
+                                    pass
                             except Exception:
                                 try:
                                     os.write(original_stdout_fd, data)
