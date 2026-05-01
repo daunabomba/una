@@ -819,7 +819,7 @@ def main():
         except Exception:
             pass
 
-        if not args.no_curses and sys.stdout.isatty() and os.environ.get("TERM") not in ("xterm-kitty",):
+        if not args.no_curses and sys.stdout.isatty():
             try:
                 from mods.curses_ui import CursesUI
                 from mods.build import init_build, run_build
