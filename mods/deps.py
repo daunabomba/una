@@ -6,7 +6,7 @@ import graphlib
 from pathlib import Path
 
 from mods import colors
-from mods.config import ConfigError
+from mods.config import ConfigError, get_transitive_deps
 
 
 def build_dep_graph(repos: list) -> dict:
@@ -73,56 +73,40 @@ def prune_graph(graph: dict, required: set) -> None:
     """
     needed = set()
 
-    def add_deps(name: str, visited: set):
-        if name in visited:
-            return
-        visited.add(name)
-        if name in graph:
-            needed.add(name)
-            for dep in graph.get(name, []):
-                add_deps(dep, visited)
-
     for name in required:
-        add_deps(name, set())
+        needed.add(name)
+        needed.update(get_transitive_deps(name, graph))
 
     to_remove = set(graph.keys()) - needed
     for name in to_remove:
         del graph[name]
 
 
-def get_keep_dirs(repos: list, dep_graph: dict, config_components: set) -> set:
+def get_keep_dirs(repos: list, dep_graph: dict) -> set:
     """
-    Calculate set of repo directory paths to keep based on config.
+    Calculate set of repo directory paths to keep based on pruned dependency graph.
 
     Keeps:
-    - All repos in config_components
-    - Their dependencies
+    - All repos present in the pruned dependency graph (includes all transitive dependencies)
     - All tools repos
 
     Args:
         repos: List of all repo configs
-        dep_graph: Dependency graph
-        config_components: Set of component names from config
+        dep_graph: Pruned dependency graph from get_build_order()
 
     Returns:
         Set of absolute Path objects for repo directories to keep
     """
     keep = set()
-
     name_map = {r["name"]: r for r in repos}
 
-    for name in config_components:
-        if name not in name_map:
-            continue
-        cfg = name_map[name]
-        if "repo_dir" in cfg:
+    # Add all repos in the pruned dependency graph (already includes transitive deps)
+    for name in dep_graph:
+        cfg = name_map.get(name)
+        if cfg and "repo_dir" in cfg:
             keep.add(Path(cfg["repo_dir"]).absolute())
 
-        for dep in dep_graph.get(name, []):
-            dep_cfg = name_map.get(dep)
-            if dep_cfg and "repo_dir" in dep_cfg:
-                keep.add(Path(dep_cfg["repo_dir"]).absolute())
-
+    # Always keep tools repos
     for r in repos:
         if r.get("type") == "tools" and "repo_dir" in r:
             keep.add(Path(r["repo_dir"]).absolute())

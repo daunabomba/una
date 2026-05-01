@@ -245,6 +245,34 @@ def deduplicate_repos(repos_config: list) -> list:
     return deduped
 
 
+def get_transitive_deps(name: str, dep_graph: dict, visited: set = None) -> set:
+    """
+    Get all transitive dependencies of a repo (including indirect dependencies).
+
+    Args:
+        name: Repository name
+        dep_graph: Dependency graph (name -> list of deps)
+        visited: Set of already-visited names (used internally for recursion)
+
+    Returns:
+        Set of all transitive dependency names (excluding name itself)
+    """
+    if visited is None:
+        visited = set()
+
+    if name in visited or name not in dep_graph:
+        return set()
+
+    visited.add(name)
+    deps = set()
+
+    for dep in dep_graph.get(name, []):
+        deps.add(dep)
+        deps.update(get_transitive_deps(dep, dep_graph, visited))
+
+    return deps
+
+
 def filter_by_requested(repos_config: list, requested: set) -> list:
     """
     Filter repos to only include requested and their dependencies.
@@ -253,23 +281,13 @@ def filter_by_requested(repos_config: list, requested: set) -> list:
     if not requested:
         return repos_config
 
-    names = {r["name"] for r in repos_config}
-    name_map = {r["name"]: r for r in repos_config}
+    # Build a dependency graph for the shared helper
+    dep_graph = {r["name"]: r.get("depends", []) for r in repos_config}
 
     needed = set()
-
-    def get_needed(name: str, visited: set):
-        if name in visited:
-            return
-        visited.add(name)
-        if name in names:
-            needed.add(name)
-            cfg = name_map.get(name, {})
-            for dep in cfg.get("depends", []):
-                get_needed(dep, visited)
-
     for name in requested:
-        get_needed(name, set())
+        needed.add(name)
+        needed.update(get_transitive_deps(name, dep_graph))
 
     return [r for r in repos_config if r["name"] in needed]
 

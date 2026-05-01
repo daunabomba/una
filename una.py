@@ -718,14 +718,6 @@ def main():
         else:
             build_all = True
 
-    config_components = set()
-    if "components" in global_cfg:
-        config_components = {
-            c.strip()
-            for c in global_cfg["components"].replace(",", " ").split()
-            if c.strip()
-        }
-
     if args.build is not None and not build_all:
         required_names = set(args.build)
     else:
@@ -742,7 +734,7 @@ def main():
     if is_enabled():
         trace_deps(build_order, dep_graph)
 
-    keep_repo_dirs = get_keep_dirs(repos_config, dep_graph, config_components)
+    keep_repo_dirs = get_keep_dirs(repos_config, dep_graph)
 
     repos_to_sync = {r["name"] for r in filtered_repos}
 
