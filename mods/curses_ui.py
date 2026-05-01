@@ -128,7 +128,8 @@ class Writer:
                         if not buf:
                             return
                         # handle lines in buf
-                        for line in buf.split("\n"):
+                        lines = buf.split("\n")
+                        for idx, line in enumerate(lines):
                             y, x = self.win.getyx()
                             if line:
                                 truncated = line[: max(w - 1, 0)]
@@ -137,20 +138,21 @@ class Writer:
                                     self.win.clrtoeol()
                                 except Exception:
                                     pass
-                            # Always advance to next line after \n (whether line had content or was empty)
-                            y, x = self.win.getyx()
-                            next_line = y + 1
-                            if next_line < h:
-                                try:
-                                    self.win.move(next_line, 0)
-                                except Exception:
-                                    pass
-                            else:
-                                try:
-                                    self.win.scroll()
-                                    self.win.move(h - 1, 0)
-                                except Exception:
-                                    pass
+                            # Always advance to next line after \n, unless it's the last empty line
+                            if idx < len(lines) - 1:
+                                y, x = self.win.getyx()
+                                next_line = y + 1
+                                if next_line < h:
+                                    try:
+                                        self.win.move(next_line, 0)
+                                    except Exception:
+                                        pass
+                                else:
+                                    try:
+                                        self.win.scroll()
+                                        self.win.move(h - 1, 0)
+                                    except Exception:
+                                        pass
                     except Exception:
                         pass
 

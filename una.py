@@ -120,7 +120,6 @@ class StepRunner:
         colors.info(f"[{self.arch}] Running {name}::{step_name}...")
         if is_enabled():
             build_step_start(self.arch, name, step_name)
-
         # 1. Cleanup and Pre-snapshot on first call for this component
         if name not in self.cleaned_components:
             report_file = self.bld_base / self.arch / "report" / f"{name}.txt"

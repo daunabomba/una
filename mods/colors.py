@@ -19,7 +19,7 @@ def info(msg):
     if isinstance(msg, str) and msg.startswith('\n'):
         prefix = '\n'
         msg = msg[1:]
-    print(_color(f"{prefix}[{msg}]", "92", bold=True), flush=True)
+    print(_color(f"{prefix}{msg}", "92", bold=True), flush=True)
 
 
 def warn(msg):
