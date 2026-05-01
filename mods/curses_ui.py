@@ -13,6 +13,10 @@ from pathlib import Path
 
 # Regex to remove CSI and other ANSI control sequences for bottom pane
 CSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+# Matches ESC followed by '(' or ')' sequences like ESC ( B
+ESC_TWO_RE = re.compile(r"\x1b[\(\)][ -/]*[@-~]")
+# Catch-all: ESC followed by a single char
+ESC_CHAR_RE = re.compile(r"\x1b.")
 CONTROL_RE_PLAIN = re.compile(r"[\x00-\x1f\x7f]")
 
 
@@ -113,9 +117,13 @@ class Writer:
                                         pass
                             else:
                                 # Empty line
-                                if y < h - 1:
+                                try:
+                                    y_new, x_new = self.win.getyx()
+                                except Exception:
+                                    y_new = y
+                                if y_new < h - 1:
                                     try:
-                                        self.win.move(y + 1, 0)
+                                        self.win.move(y_new + 1, 0)
                                     except Exception:
                                         pass
                                 else:
@@ -360,6 +368,8 @@ class CursesUI:
                                 if data:
                                     # Strip ANSI/terminal control sequences for bottom pane
                                     clean = CSI_RE.sub("", data)
+                                    clean = ESC_TWO_RE.sub("", clean)
+                                    clean = ESC_CHAR_RE.sub("", clean)
                                     clean = CONTROL_RE_PLAIN.sub("", clean)
                                     with self.lock:
                                         h, w = self.bottom.getmaxyx()
@@ -371,11 +381,11 @@ class CursesUI:
                                             if line:
                                                 truncated = line[: w - 1]
                                                 try:
-                                                    self.bottom.addstr(truncated)
+                                                    self.bottom.addstr(y, 0, truncated)
                                                     self.bottom.clrtoeol()
                                                 except Exception:
                                                     try:
-                                                        self.bottom.addstr(truncated)
+                                                        self.bottom.addstr(2, 0, truncated)
                                                     except Exception:
                                                         pass
 
