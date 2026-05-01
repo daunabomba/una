@@ -193,8 +193,12 @@ class StepRunner:
                         except Exception:
                             # Fallback to raw FD write if sys.stdout not usable or would loop
                             os.write(original_stdout_fd, data)
-                        log_file.write(data.decode("utf-8", errors="replace"))
-                        log_file.flush()
+                        try:
+                            log_file.write(data.decode("utf-8", errors="replace"))
+                            log_file.flush()
+                        except ValueError:
+                            # Log file closed by main thread; exit reader
+                            break
                         with buffer_lock:
                             output_buffer.append(data)
                 except (OSError, IOError):
@@ -218,8 +222,11 @@ class StepRunner:
                         sd.flush()
                     except Exception:
                         os.write(original_stdout_fd, data)
-                    log_file.write(data.decode("utf-8", errors="replace"))
-                    log_file.flush()
+                    try:
+                        log_file.write(data.decode("utf-8", errors="replace"))
+                        log_file.flush()
+                    except ValueError:
+                        break
                     with buffer_lock:
                         output_buffer.append(data)
             except (OSError, IOError):
@@ -242,9 +249,9 @@ class StepRunner:
             except Exception:
                 pass
 
-            # Wait for reader thread to finish
+            # Wait for reader thread to finish (block until drained)
             try:
-                reader.join(timeout=2)
+                reader.join()
             except Exception:
                 pass
 
