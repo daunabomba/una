@@ -205,20 +205,26 @@ class StepRunner:
                             if item is None:
                                 break
                             text = item
-                            # Separate handling for log file (normalize line endings) vs top window (strip CR)
-                            text_for_log = text
-                            text_for_top = text
+                            # Separate handling for log file vs top window
                             if isinstance(text, str):
                                 # For log file: normalize all CR variants to LF so bottom pane displays correctly
                                 text_for_log = text.replace('\r\n', '\n').replace('\r', '\n')
-                                # For top window: filter out CR to let curses handle newlines
-                                text_for_top = text.replace('\r', '')
+                            else:
+                                text_for_log = text
+                            
+                            # For top window: pass original text unchanged - curses Writer handles normalization
+                            text_for_top = text
                             
                             try:
                                 if hasattr(self.logfile, 'write'):
                                     self.logfile.write(text_for_log)
                                     try:
                                         self.logfile.flush()
+                                        # Force sync to disk for immediate visibility
+                                        try:
+                                            os.fsync(self.logfile.fileno())
+                                        except Exception:
+                                            pass
                                     except Exception:
                                         pass
                             except Exception:
@@ -265,8 +271,8 @@ class StepRunner:
 
                 # Writer for top pane (Python prints)
                 async_top_writer = AsyncLogWriter(old_sys_stdout, log_file, write_to_top=True)
-                # Writer for pipe/subprocess output -> only log file (bottom watcher reads it)
-                async_file_writer = AsyncLogWriter(None, log_file, write_to_top=False)
+                # Writer for subprocess output -> both log file and top window
+                async_file_writer = AsyncLogWriter(old_sys_stdout, log_file, write_to_top=True)
 
                 class StdoutReplacer:
                     def __init__(self, aw):
@@ -313,8 +319,7 @@ class StepRunner:
                         if not data:
                             break
                         text = data.decode('utf-8', errors='replace')
-                        # Filter out carriage returns to prevent garbled output
-                        text = text.replace('\r', '')
+                        # Don't filter carriage returns here - AsyncLogWriter handles normalization
                         try:
                             # Send subprocess/pipe data only to file writer
                             if async_file_writer:
@@ -332,8 +337,7 @@ class StepRunner:
                             if not data:
                                 break
                             text = data.decode('utf-8', errors='replace')
-                            # Filter out carriage returns
-                            text = text.replace('\r', '')
+                            # Don't filter carriage returns here - let AsyncLogWriter handle it
                             try:
                                 # Drain remaining data into file-only writer
                                 if async_file_writer:
