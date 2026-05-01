@@ -180,10 +180,18 @@ class StepRunner:
                             break
                         # Write to sys.stdout (so curses Writer can capture) and log file
                         try:
-                            sys.stdout.write(data.decode("utf-8", errors="replace"))
-                            sys.stdout.flush()
+                            sd = sys.stdout
+                            try:
+                                fil = sd.fileno()
+                            except Exception:
+                                fil = None
+                            # If sys.stdout is the pipe write end, avoid writing to it (would loop)
+                            if fil is not None and fil == pipe_write:
+                                raise Exception("stdout is pipe")
+                            sd.write(data.decode("utf-8", errors="replace"))
+                            sd.flush()
                         except Exception:
-                            # Fallback to raw FD write if sys.stdout not usable
+                            # Fallback to raw FD write if sys.stdout not usable or would loop
                             os.write(original_stdout_fd, data)
                         log_file.write(data.decode("utf-8", errors="replace"))
                         log_file.flush()
@@ -199,8 +207,15 @@ class StepRunner:
                     if not data:
                         break
                     try:
-                        sys.stdout.write(data.decode("utf-8", errors="replace"))
-                        sys.stdout.flush()
+                        sd = sys.stdout
+                        try:
+                            fil = sd.fileno()
+                        except Exception:
+                            fil = None
+                        if fil is not None and fil == pipe_write:
+                            raise Exception("stdout is pipe")
+                        sd.write(data.decode("utf-8", errors="replace"))
+                        sd.flush()
                     except Exception:
                         os.write(original_stdout_fd, data)
                     log_file.write(data.decode("utf-8", errors="replace"))
@@ -210,8 +225,8 @@ class StepRunner:
             except (OSError, IOError):
                 pass
 
-        # Start reader thread
-        reader = threading.Thread(target=reader_thread, daemon=True)
+        # Start reader thread (non-daemon so we can join reliably)
+        reader = threading.Thread(target=reader_thread, daemon=False)
         reader.start()
 
         try:
