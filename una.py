@@ -809,6 +809,16 @@ def main():
         handle_repos(repos, "status")
 
     if args.build is not None or build_all:
+        # Debug: report why curses UI will or won't be used
+        try:
+            stderr_msg = (
+                f"DEBUG: no_curses={args.no_curses}, stdout_isatty={sys.stdout.isatty()}, TERM={os.environ.get('TERM')}, arches={arches}\n"
+            )
+            sys.stderr.write(stderr_msg)
+            sys.stderr.flush()
+        except Exception:
+            pass
+
         if not args.no_curses and sys.stdout.isatty() and os.environ.get("TERM") not in ("xterm-kitty",):
             try:
                 from mods.curses_ui import CursesUI
@@ -839,6 +849,14 @@ def main():
                 conf_name = Path(conf_files[0]).stem
                 arch_for_logs = arches[0] if arches else "x32"
                 log_dir = str(BASE_DIR / "bld" / conf_name / arch_for_logs / "build_logs")
+
+                # Debug: indicate starting curses UI and the log_dir
+                try:
+                    sys.stderr.write(f"DEBUG: Starting CursesUI with log_dir={log_dir}\n")
+                    sys.stderr.flush()
+                except Exception:
+                    pass
+
                 ui = CursesUI(log_dir=log_dir)
                 # Pass the build function to run in background
                 ui.start(run_build, args)
