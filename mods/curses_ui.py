@@ -11,6 +11,10 @@ import time
 import re
 from pathlib import Path
 
+# Regex to remove CSI and other ANSI control sequences for bottom pane
+CSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+CONTROL_RE_PLAIN = re.compile(r"[\x00-\x1f\x7f]")
+
 
 class Writer:
     """File-like object that writes to a curses window."""
@@ -70,18 +74,35 @@ class Writer:
                             if line:
                                 truncated = line[: max(w - 1, 0)]
                                 try:
-                                    self.win.addstr(y, 0, truncated, attr)
-                                    self.win.clrtoeol()
+                                    # write at current cursor (let curses update cursor)
+                                    try:
+                                        self.win.addstr(truncated, attr)
+                                    except TypeError:
+                                        # some curses implementations expect (y,x,str,attr), fallback
+                                        try:
+                                            y_cur, x_cur = self.win.getyx()
+                                            self.win.addstr(y_cur, 0, truncated, attr)
+                                        except Exception:
+                                            self.win.addstr(y_cur, 0, truncated)
+                                    try:
+                                        self.win.clrtoeol()
+                                    except Exception:
+                                        pass
                                 except Exception:
                                     try:
+                                        # fallback to coordinates
                                         self.win.addstr(y, 0, truncated)
                                         self.win.clrtoeol()
                                     except Exception:
                                         pass
-                                # Move to next line
-                                if y < h - 1:
+                                # Move to next line (use current y)
+                                try:
+                                    y_new, x_new = self.win.getyx()
+                                except Exception:
+                                    y_new = y
+                                if y_new < h - 1:
                                     try:
-                                        self.win.move(y + 1, 0)
+                                        self.win.move(y_new + 1, 0)
                                     except Exception:
                                         pass
                                 else:
@@ -337,17 +358,26 @@ class CursesUI:
                                 f.seek(last_pos)
                                 data = f.read()
                                 if data:
+                                    # Strip ANSI/terminal control sequences for bottom pane
+                                    clean = CSI_RE.sub("", data)
+                                    clean = CONTROL_RE_PLAIN.sub("", clean)
                                     with self.lock:
                                         h, w = self.bottom.getmaxyx()
                                         self.bottom.move(2, 0)
 
-                                        for line in data.split("\n"):
+                                        for line in clean.split("\n"):
                                             y, x = self.bottom.getyx()
 
                                             if line:
                                                 truncated = line[: w - 1]
-                                                self.bottom.addstr(y, 0, truncated)
-                                                self.bottom.clrtoeol()
+                                                try:
+                                                    self.bottom.addstr(truncated)
+                                                    self.bottom.clrtoeol()
+                                                except Exception:
+                                                    try:
+                                                        self.bottom.addstr(truncated)
+                                                    except Exception:
+                                                        pass
 
                                             # Move to next line
                                             if y < h - 1:
@@ -356,7 +386,10 @@ class CursesUI:
                                                 self.bottom.scroll()
                                                 self.bottom.move(h - 2, 0)
 
-                                        self.bottom.refresh()
+                                        try:
+                                            self.bottom.refresh()
+                                        except Exception:
+                                            pass
                                     last_pos = f.tell()
                 except Exception:
                     pass
