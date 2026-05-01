@@ -94,9 +94,9 @@ class Writer:
                 except Exception:
                     pass
 
-                # Remove leftover lone '[' followed by digits/semicolons from incomplete sequences
+                # Remove incomplete ANSI sequences (ESC was already stripped, leaving '[Digits' at end of text)
                 try:
-                    t = re.sub(r"\[[0-9;?]*", "", t)
+                    t = re.sub(r"\[[0-9;?]+\Z", "", t)
                 except Exception:
                     pass
 
@@ -182,11 +182,11 @@ class Writer:
                             else:
                                 # Empty line: advance based on current cursor
                                 try:
-                                    y_cur, x_cur = self.win.getmaxyx()
+                                    y_cur, x_cur = self.win.getyx()
                                 except Exception:
                                     y_cur = y
                                 try:
-                                    next_line = y + 1
+                                    next_line = y_cur + 1
                                 except Exception:
                                     next_line = y + 1
                                 if next_line < h:
@@ -452,7 +452,6 @@ class CursesUI:
                                     clean = CONTROL_RE_PLAIN.sub("", clean)
                                     with self.lock:
                                         h, w = self.bottom.getmaxyx()
-                                        self.bottom.move(2, 0)
 
                                         for line in clean.split("\n"):
                                             y, x = self.bottom.getyx()
@@ -464,7 +463,7 @@ class CursesUI:
                                                     self.bottom.clrtoeol()
                                                 except Exception:
                                                     try:
-                                                        self.bottom.addstr(2, 0, truncated)
+                                                        self.bottom.addstr(y, 0, truncated)
                                                     except Exception:
                                                         pass
 
@@ -473,7 +472,7 @@ class CursesUI:
                                                 self.bottom.move(y + 1, 0)
                                             else:
                                                 self.bottom.scroll()
-                                                self.bottom.move(h - 2, 0)
+                                                self.bottom.move(h - 1, 0)
 
                                         try:
                                             self.bottom.refresh()
