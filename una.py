@@ -178,23 +178,80 @@ class StepRunner:
                         data = os.read(pipe_read, 4096)
                         if not data:
                             break
-                        # Write to sys.stdout (so curses Writer can capture) and log file
+                        # Prefer writing directly to curses Writer window if present
+                        written_to_curses = False
                         try:
                             sd = sys.stdout
-                            try:
-                                fil = sd.fileno()
-                            except Exception:
-                                fil = None
-                            # If sys.stdout is the pipe write end, avoid writing to it (would loop)
-                            if fil is not None and fil == pipe_write:
-                                raise Exception("stdout is pipe")
-                            sd.write(data.decode("utf-8", errors="replace"))
-                            sd.flush()
+                            # If sys.stdout looks like the Writer (has win and lock), write directly
+                            if hasattr(sd, 'win') and hasattr(sd, 'lock'):
+                                try:
+                                    text = data.decode('utf-8', errors='replace')
+                                    with sd.lock:
+                                        try:
+                                            h, w = sd.win.getmaxyx()
+                                        except Exception:
+                                            h, w = (0, 0)
+                                        # naive split lines and write
+                                        for line in text.split('\n'):
+                                            try:
+                                                y, x = sd.win.getyx()
+                                            except Exception:
+                                                y, x = (0, 0)
+                                            if line:
+                                                truncated = line[: max(w - 1, 0)]
+                                                try:
+                                                    sd.win.addstr(y, 0, truncated)
+                                                    sd.win.clrtoeol()
+                                                except Exception:
+                                                    pass
+                                                # Move to next line
+                                                try:
+                                                    if y < h - 1:
+                                                        sd.win.move(y + 1, 0)
+                                                    else:
+                                                        sd.win.scroll()
+                                                        sd.win.move(max(h - 2, 0), 0)
+                                                except Exception:
+                                                    pass
+                                            else:
+                                                try:
+                                                    if y < h - 1:
+                                                        sd.win.move(y + 1, 0)
+                                                    else:
+                                                        sd.win.scroll()
+                                                        sd.win.move(max(h - 2, 0), 0)
+                                                except Exception:
+                                                    pass
+                                        try:
+                                            sd.win.refresh()
+                                        except Exception:
+                                            pass
+                                    written_to_curses = True
+                                except Exception:
+                                    written_to_curses = False
+                            else:
+                                # Fallback: attempt safe sys.stdout.write
+                                try:
+                                    fil = None
+                                    try:
+                                        fil = sd.fileno()
+                                    except Exception:
+                                        fil = None
+                                    if fil is not None and fil == pipe_write:
+                                        raise Exception('stdout is pipe')
+                                    sd.write(data.decode('utf-8', errors='replace'))
+                                    sd.flush()
+                                except Exception:
+                                    os.write(original_stdout_fd, data)
                         except Exception:
-                            # Fallback to raw FD write if sys.stdout not usable or would loop
-                            os.write(original_stdout_fd, data)
+                            try:
+                                os.write(original_stdout_fd, data)
+                            except Exception:
+                                pass
+
+                        # Write to log file (always try)
                         try:
-                            log_file.write(data.decode("utf-8", errors="replace"))
+                            log_file.write(data.decode('utf-8', errors='replace'))
                             log_file.flush()
                         except ValueError:
                             # Log file closed by main thread; exit reader
@@ -210,20 +267,76 @@ class StepRunner:
                     data = os.read(pipe_read, 4096)
                     if not data:
                         break
+                    # Drain remaining data; use same direct-to-curses logic as above
                     try:
                         sd = sys.stdout
-                        try:
-                            fil = sd.fileno()
-                        except Exception:
-                            fil = None
-                        if fil is not None and fil == pipe_write:
-                            raise Exception("stdout is pipe")
-                        sd.write(data.decode("utf-8", errors="replace"))
-                        sd.flush()
+                        if hasattr(sd, 'win') and hasattr(sd, 'lock'):
+                            try:
+                                text = data.decode('utf-8', errors='replace')
+                                with sd.lock:
+                                    try:
+                                        h, w = sd.win.getmaxyx()
+                                    except Exception:
+                                        h, w = (0, 0)
+                                    for line in text.split('\n'):
+                                        try:
+                                            y, x = sd.win.getyx()
+                                        except Exception:
+                                            y, x = (0, 0)
+                                        if line:
+                                            truncated = line[: max(w - 1, 0)]
+                                            try:
+                                                sd.win.addstr(y, 0, truncated)
+                                                sd.win.clrtoeol()
+                                            except Exception:
+                                                pass
+                                            try:
+                                                if y < h - 1:
+                                                    sd.win.move(y + 1, 0)
+                                                else:
+                                                    sd.win.scroll()
+                                                    sd.win.move(max(h - 2, 0), 0)
+                                            except Exception:
+                                                pass
+                                        else:
+                                            try:
+                                                if y < h - 1:
+                                                    sd.win.move(y + 1, 0)
+                                                else:
+                                                    sd.win.scroll()
+                                                    sd.win.move(max(h - 2, 0), 0)
+                                            except Exception:
+                                                pass
+                                    try:
+                                        sd.win.refresh()
+                                    except Exception:
+                                        pass
+                            except Exception:
+                                try:
+                                    os.write(original_stdout_fd, data)
+                                except Exception:
+                                    pass
+                        else:
+                            try:
+                                fil = None
+                                try:
+                                    fil = sd.fileno()
+                                except Exception:
+                                    fil = None
+                                if fil is not None and fil == pipe_write:
+                                    raise Exception('stdout is pipe')
+                                sd.write(data.decode('utf-8', errors='replace'))
+                                sd.flush()
+                            except Exception:
+                                os.write(original_stdout_fd, data)
                     except Exception:
-                        os.write(original_stdout_fd, data)
+                        try:
+                            os.write(original_stdout_fd, data)
+                        except Exception:
+                            pass
+
                     try:
-                        log_file.write(data.decode("utf-8", errors="replace"))
+                        log_file.write(data.decode('utf-8', errors='replace'))
                         log_file.flush()
                     except ValueError:
                         break

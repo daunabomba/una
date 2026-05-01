@@ -36,40 +36,111 @@ class Writer:
 
     def write(self, text):
         with self.lock:
-            # Strip ANSI escape codes and control characters
-            text = self.ANSI_RE.sub("", text)
+            # Remove control characters
             text = self.CONTROL_RE.sub("", text)
 
             try:
                 h, w = self.win.getmaxyx()
 
-                for line in text.split("\n"):
-                    # Get current position
-                    y, x = self.win.getyx()
+                # We'll parse ANSI color codes and apply simple mappings to curses color pairs
+                parts = []
+                last_index = 0
+                for m in self.ANSI_RE.finditer(text):
+                    if m.start() > last_index:
+                        parts.append((text[last_index:m.start()], None))
+                    parts.append((None, m.group(0)))
+                    last_index = m.end()
+                if last_index < len(text):
+                    parts.append((text[last_index:], None))
 
-                    if line:
-                        # Truncate line to fit width
-                        truncated = line[: w - 1]
+                # Current attribute
+                attr = 0
+                bold = False
 
-                        # Write the line
-                        self.win.addstr(y, 0, truncated)
-                        self.win.clrtoeol()
+                buf = ""
 
-                        # Move to next line
-                        if y < h - 1:
-                            self.win.move(y + 1, 0)
-                        else:
-                            self.win.scroll()
-                            self.win.move(h - 2, 0)
+                def flush_buf(y, buf, attr):
+                    try:
+                        if not buf:
+                            return
+                        # handle lines in buf
+                        for line in buf.split("\n"):
+                            y, x = self.win.getyx()
+                            if line:
+                                truncated = line[: max(w - 1, 0)]
+                                try:
+                                    self.win.addstr(y, 0, truncated, attr)
+                                    self.win.clrtoeol()
+                                except Exception:
+                                    try:
+                                        self.win.addstr(y, 0, truncated)
+                                        self.win.clrtoeol()
+                                    except Exception:
+                                        pass
+                                # Move to next line
+                                if y < h - 1:
+                                    try:
+                                        self.win.move(y + 1, 0)
+                                    except Exception:
+                                        pass
+                                else:
+                                    try:
+                                        self.win.scroll()
+                                        self.win.move(max(h - 2, 0), 0)
+                                    except Exception:
+                                        pass
+                            else:
+                                # Empty line
+                                if y < h - 1:
+                                    try:
+                                        self.win.move(y + 1, 0)
+                                    except Exception:
+                                        pass
+                                else:
+                                    try:
+                                        self.win.scroll()
+                                        self.win.move(max(h - 2, 0), 0)
+                                    except Exception:
+                                        pass
+                    except Exception:
+                        pass
+
+                for part, code in parts:
+                    if code is None:
+                        buf += part
                     else:
-                        # Empty line - just move to next line
-                        if y < h - 1:
-                            self.win.move(y + 1, 0)
+                        # flush current buffer before processing code
+                        flush_buf(self.win.getyx()[0], buf, curses.A_BOLD | attr if bold else attr)
+                        buf = ""
+                        # parse code numbers
+                        nums = code.lstrip('\x1b[').rstrip('m')
+                        nums_list = [int(n) for n in nums.split(';') if n.isdigit()]
+                        # reset
+                        if not nums_list or 0 in nums_list:
+                            attr = 0
+                            bold = False
                         else:
-                            self.win.scroll()
-                            self.win.move(h - 2, 0)
+                            for n in nums_list:
+                                if n == 1:
+                                    bold = True
+                                elif n in (32, 92):
+                                    try:
+                                        attr = curses.color_pair(1)
+                                    except Exception:
+                                        attr = 0
+                                elif n in (36, 96):
+                                    try:
+                                        attr = curses.color_pair(2)
+                                    except Exception:
+                                        attr = 0
+                                # ignore others
+                # flush remainder
+                flush_buf(self.win.getyx()[0], buf, curses.A_BOLD | attr if bold else attr)
 
-                self.win.refresh()
+                try:
+                    self.win.refresh()
+                except Exception:
+                    pass
             except Exception:
                 pass
         return len(text)
