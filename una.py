@@ -213,22 +213,43 @@ class StepRunner:
             stop_event.set()
 
             # Close the write end of the pipe to signal EOF
-            os.close(pipe_write)
+            try:
+                os.close(pipe_write)
+            except Exception:
+                pass
 
             # Wait for reader thread to finish
-            reader.join(timeout=2)
+            try:
+                reader.join(timeout=2)
+            except Exception:
+                pass
 
             # Restore original file descriptors
-            os.dup2(original_stdout_fd, 1)
-            os.dup2(original_stderr_fd, 2)
+            try:
+                os.dup2(original_stdout_fd, 1)
+                os.dup2(original_stderr_fd, 2)
+            except Exception:
+                pass
 
             # Close our duplicates
-            os.close(original_stdout_fd)
-            os.close(original_stderr_fd)
-            os.close(pipe_read)
+            try:
+                os.close(original_stdout_fd)
+            except Exception:
+                pass
+            try:
+                os.close(original_stderr_fd)
+            except Exception:
+                pass
+            try:
+                os.close(pipe_read)
+            except Exception:
+                pass
 
             # Close log file
-            log_file.close()
+            try:
+                log_file.close()
+            except Exception:
+                pass
 
         # 3. Post-snapshot and report
         pre = self.component_snapshots[name]
@@ -765,7 +786,7 @@ def main():
         handle_repos(repos, "status")
 
     if args.build is not None or build_all:
-        if not args.no_curses:
+        if not args.no_curses and sys.stdout.isatty() and os.environ.get("TERM") not in ("xterm-kitty",):
             try:
                 from mods.curses_ui import CursesUI
                 from mods.build import init_build, run_build
@@ -805,6 +826,14 @@ def main():
                 colors.warn(
                     f"Warning: curses UI failed ({e}), falling back to non-curses mode"
                 )
+                # Restore terminal in case curses partially initialized
+                try:
+                    import curses
+                    curses.echo()
+                    curses.nocbreak()
+                    curses.endwin()
+                except:
+                    pass
                 # Fall through to non-curses mode below
 
         # Run build directly (no curses)

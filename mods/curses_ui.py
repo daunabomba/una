@@ -16,24 +16,53 @@ class Writer:
     """File-like object that writes to a curses window."""
 
     ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+    CONTROL_RE = re.compile(r"[\r\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
-    def __init__(self, win, lock, width):
+    def __init__(self, win, lock):
         self.win = win
         self.lock = lock
-        self.width = width
+        # Start at line 2 (after header)
+        self.win.move(2, 0)
+        self.win.refresh()
 
     def write(self, text):
         with self.lock:
-            # Strip ANSI escape codes for curses display
+            # Strip ANSI escape codes and control characters
             text = self.ANSI_RE.sub("", text)
-            for line in text.rstrip().split("\n"):
-                if line:
-                    line = line[: self.width - 2]
-                try:
-                    self.win.addstr(line + "\n")
-                    self.win.refresh()
-                except Exception:
-                    pass
+            text = self.CONTROL_RE.sub("", text)
+
+            try:
+                h, w = self.win.getmaxyx()
+
+                for line in text.split("\n"):
+                    # Get current position
+                    y, x = self.win.getyx()
+
+                    if line:
+                        # Truncate line to fit width
+                        truncated = line[: w - 1]
+
+                        # Write the line
+                        self.win.addstr(y, 0, truncated)
+                        self.win.clrtoeol()
+
+                        # Move to next line
+                        if y < h - 1:
+                            self.win.move(y + 1, 0)
+                        else:
+                            self.win.scroll()
+                            self.win.move(h - 2, 0)
+                    else:
+                        # Empty line - just move to next line
+                        if y < h - 1:
+                            self.win.move(y + 1, 0)
+                        else:
+                            self.win.scroll()
+                            self.win.move(h - 2, 0)
+
+                self.win.refresh()
+            except Exception:
+                pass
         return len(text)
 
     def flush(self):
@@ -66,9 +95,17 @@ class CursesUI:
     def start(self, build_func, *args, **kwargs):
         """Start curses UI and run build_func in background."""
         self.build_func = build_func
-        # args is a tuple of positional arguments to pass to build_func
         self.build_args = (args, kwargs)
-        curses.wrapper(self._main)
+        try:
+            curses.wrapper(self._main)
+        except Exception as e:
+            # Try to restore terminal before re-raising
+            try:
+                curses.echo()
+                curses.endwin()
+            except:
+                pass
+            raise e
 
     def _main(self, stdscr):
         self.stdscr = stdscr
@@ -80,50 +117,50 @@ class CursesUI:
         curses.init_pair(2, curses.COLOR_CYAN, curses.COLOR_BLACK)
 
         self.h, self.w = stdscr.getmaxyx()
-        top_h = self.h // 2
-        bot_h = self.h - top_h - 1  # -1 for stdscr
 
+        # Calculate window heights - split 50/50
+        top_h = self.h // 2
+        bot_h = self.h - top_h
+
+        # Create windows
         self.top = curses.newwin(top_h, self.w, 0, 0)
         self.bottom = curses.newwin(bot_h, self.w, top_h, 0)
 
         self.top.scrollok(True)
         self.bottom.scrollok(True)
 
-        # Headers
-        self.top.addstr(
-            0, 0, "=== Una Output ===", curses.A_BOLD | curses.color_pair(1)
-        )
+        # Draw headers on top window
+        self.top.addstr(0, 0, "=== Una Output ===", curses.A_BOLD | curses.color_pair(1))
         self.top.hline(1, 0, curses.ACS_HLINE, self.w)
+        self.top.refresh()
 
+        # Draw headers on bottom window
         self.bottom.addstr(
             0, 0, "=== Build Logs ===", curses.A_BOLD | curses.color_pair(2)
         )
         self.bottom.hline(1, 0, curses.ACS_HLINE, self.w)
-
-        self.top.refresh()
         self.bottom.refresh()
 
         self.running = True
 
-        # Redirect stdout/stderr
+        # Redirect stdout/stderr to top window
         self.old_stdout = sys.stdout
         self.old_stderr = sys.stderr
 
-        sys.stdout = Writer(self.top, self.lock, self.w)
-        sys.stderr = Writer(self.top, self.lock, self.w)
+        writer = Writer(self.top, self.lock)
+        sys.stdout = writer
+        sys.stderr = writer
 
-        # Start log watcher
+        # Start log watcher for bottom window
         if self.log_dir:
             self._start_watcher()
 
         # Start build in background thread
         if self.build_func:
-            # Call build_func with saved args
             args_tuple, kwargs_dict = self.build_args
             self.build_thread = threading.Thread(
-                target=lambda: self.build_func(*args_tuple, **kwargs_dict)
+                target=lambda: self.build_func(*args_tuple, **kwargs_dict), daemon=True
             )
-            self.build_thread.daemon = True
             self.build_thread.start()
 
         # Wait for build to complete or user presses 'q'
@@ -134,13 +171,10 @@ class CursesUI:
                     if ch == ord("q"):
                         break
                     time.sleep(0.1)
-        except Exception as e:
+        except Exception:
             pass
         finally:
-            try:
-                self.close()
-            except:
-                pass
+            self.close()
 
     def _start_watcher(self):
         """Watch log directory for new logs."""
@@ -167,7 +201,9 @@ class CursesUI:
                         if cur != last_log:
                             last_log = cur
                             last_pos = 0
+
                             with self.lock:
+                                # Clear bottom window and redraw header
                                 self.bottom.clear()
                                 self.bottom.addstr(
                                     0,
@@ -176,6 +212,7 @@ class CursesUI:
                                     curses.A_BOLD | curses.color_pair(2),
                                 )
                                 self.bottom.hline(1, 0, curses.ACS_HLINE, self.w)
+                                self.bottom.move(2, 0)
                                 self.bottom.refresh()
 
                         if cur.exists():
@@ -184,12 +221,26 @@ class CursesUI:
                                 data = f.read()
                                 if data:
                                     with self.lock:
+                                        h, w = self.bottom.getmaxyx()
+                                        self.bottom.move(2, 0)
+
                                         for line in data.split("\n"):
+                                            y, x = self.bottom.getyx()
+
                                             if line:
-                                                line = line[: self.w - 2]
-                                            self.bottom.addstr(line + "\n")
+                                                truncated = line[: w - 1]
+                                                self.bottom.addstr(y, 0, truncated)
+                                                self.bottom.clrtoeol()
+
+                                            # Move to next line
+                                            if y < h - 1:
+                                                self.bottom.move(y + 1, 0)
+                                            else:
+                                                self.bottom.scroll()
+                                                self.bottom.move(h - 2, 0)
+
                                         self.bottom.refresh()
-                                last_pos = f.tell()
+                                    last_pos = f.tell()
                 except Exception:
                     pass
                 time.sleep(0.2)
@@ -200,6 +251,7 @@ class CursesUI:
     def close(self):
         """Restore terminal."""
         self.running = False
+
         if self.log_thread:
             self.log_thread.join(timeout=1)
 
@@ -208,16 +260,8 @@ class CursesUI:
         if self.old_stderr:
             sys.stderr = self.old_stderr
 
-        # Only call endwin if curses was properly initialized
+        # curses.wrapper() handles cleanup, but we need to ensure terminal is restored
         try:
-            curses.endwin()
-        except:
-            pass
-
-        try:
-            curses.nocbreak()
-            self.stdscr.keypad(False)
-            curses.echo()
             curses.endwin()
         except Exception:
             pass
