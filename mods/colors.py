@@ -14,14 +14,19 @@ def _color(text, color_code, bold=False):
 
 def info(msg):
     """Bright green for informative messages about what stage is being run."""
-    print(_color(f"[{msg}", "92", bold=True))
+    # Handle leading newlines - they should be outside the brackets
+    prefix = ""
+    if isinstance(msg, str) and msg.startswith('\n'):
+        prefix = '\n'
+        msg = msg[1:]
+    print(_color(f"{prefix}[{msg}]", "92", bold=True), flush=True)
 
 
 def warn(msg):
     """Orange (Yellow) for warnings."""
-    print(_color(msg, "33", bold=True))
+    print(_color(msg, "33", bold=True), flush=True)
 
 
 def error(msg):
     """Red for errors."""
-    print(_color(msg, "91", bold=True))
+    print(_color(msg, "91", bold=True), flush=True)

@@ -45,6 +45,18 @@ class Writer:
             except Exception:
                 pass
 
+    def isatty(self):
+        """Return False since this is not a real terminal."""
+        return False
+
+    def flush(self):
+        """Flush output - refresh the curses window."""
+        try:
+            with self.lock:
+                self.win.refresh()
+        except Exception:
+            pass
+
     def write(self, text):
         with self.lock:
             # Convert carriage returns to newlines so progress updates become new lines
