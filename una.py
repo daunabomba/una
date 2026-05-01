@@ -169,51 +169,85 @@ class StepRunner:
         # Rebind Python-level sys.stdout/stderr to a Tee so Python prints go to both the
         # original sys.stdout (usually the curses Writer) and the pipe (so reader can log)
         try:
-            import io
+            import io, queue
 
-            # Create a text wrapper around FD 1 (which now points to the pipe)
-            dup_fd = os.dup(1)
-            # Instead of sending Python prints into the pipe (risking blocking),
-            # construct a Tee that writes to the log file and the original stdout (Writer).
-            class Tee:
-                def __init__(self, a, logfile):
-                    self.a = a  # original sys.stdout (Writer)
-                    self.logfile = logfile  # Python file object for logs
-                def write(self, txt):
-                    last_exc = None
-                    # Write to log file first (non-blocking disk write expected)
-                    try:
-                        if hasattr(self.logfile, 'write'):
-                            self.logfile.write(txt)
+            # Background asynchronous writer to avoid blocking the main thread
+            class AsyncLogWriter:
+                def __init__(self, writer_obj, logfile, write_to_top=True):
+                    self.writer = writer_obj
+                    self.logfile = logfile
+                    self.write_to_top = bool(write_to_top)
+                    self.q = queue.Queue()
+                    self.thread = threading.Thread(target=self._run, daemon=True)
+                    self.thread.start()
+                def _run(self):
+                    while True:
+                        try:
+                            item = self.q.get()
+                        except Exception:
+                            continue
+                        if item is None:
+                            break
+                        text = item
+                        try:
+                            if hasattr(self.logfile, 'write'):
+                                self.logfile.write(text)
+                                try:
+                                    self.logfile.flush()
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                        # Optionally write to top writer (curses Writer)
+                        if self.write_to_top and self.writer is not None:
                             try:
-                                self.logfile.flush()
+                                if hasattr(self.writer, 'write'):
+                                    self.writer.write(text)
+                                    try:
+                                        self.writer.flush()
+                                    except Exception:
+                                        pass
                             except Exception:
+                                # If writing to the curses writer fails, skip writing to terminal
+                                # to avoid emitting raw escape sequences outside curses.
                                 pass
-                    except Exception as e:
-                        last_exc = e
-                    # Then write to original stdout (may acquire writer lock)
-                    try:
-                        if hasattr(self.a, 'write'):
-                            self.a.write(txt)
-                    except Exception:
-                        if last_exc is not None:
-                            # both failed
-                            raise
-                    return len(txt)
-                def flush(self):
                     try:
                         if hasattr(self.logfile, 'flush'):
                             self.logfile.flush()
                     except Exception:
                         pass
+                def put(self, txt):
                     try:
-                        if hasattr(self.a, 'flush'):
-                            self.a.flush()
+                        self.q.put(txt)
                     except Exception:
                         pass
-            tee = Tee(old_sys_stdout, log_file)
-            sys.stdout = tee
-            sys.stderr = tee
+                def stop(self):
+                    try:
+                        self.q.put(None)
+                        self.thread.join(timeout=5)
+                    except Exception:
+                        pass
+
+            # Writer for top pane (Python prints)
+            async_top_writer = AsyncLogWriter(old_sys_stdout, log_file, write_to_top=True)
+            # Writer for pipe/subprocess output -> only log file (bottom watcher reads it)
+            async_file_writer = AsyncLogWriter(None, log_file, write_to_top=False)
+
+            class StdoutReplacer:
+                def __init__(self, aw):
+                    self.aw = aw
+                def write(self, txt):
+                    # Queue writes so the main thread never holds the curses Writer lock
+                    try:
+                        self.aw.put(txt)
+                    except Exception:
+                        pass
+                    return len(txt)
+                def flush(self):
+                    pass
+
+            sys.stdout = StdoutReplacer(async_top_writer)
+            sys.stderr = sys.stdout
         except Exception:
             # If we can't rebind, continue — reader will capture subprocess output
             pass
@@ -224,116 +258,46 @@ class StepRunner:
         stop_event = threading.Event()
 
         def reader_thread():
-            """Read from pipe and write to terminal and log file."""
-            # Use a polling approach for cross-platform compatibility
-            while not stop_event.is_set():
+            """Read from pipe and enqueue data for the asynchronous writer.
+
+            Blocking read loop. Puts decoded text into async_writer so a single
+            background thread performs all writes (avoids writer lock deadlocks).
+            """
+            try:
+                while True:
+                    try:
+                        data = os.read(pipe_read, 4096)
+                    except (OSError, IOError):
+                        break
+                    if not data:
+                        break
+                    text = data.decode('utf-8', errors='replace')
+                    try:
+                        # Send subprocess/pipe data only to file writer
+                        async_file_writer.put(text)
+                    except Exception:
+                        # don't write raw bytes to original stdout (would corrupt terminal)
+                        pass
+                    with buffer_lock:
+                        output_buffer.append(data)
+            finally:
+                # Drain any remaining data (best effort)
                 try:
-                    # Check if there's data to read (with timeout)
-                    ready, _, _ = select.select([pipe_read], [], [], 0.1)
-                    if ready:
+                    while True:
                         data = os.read(pipe_read, 4096)
                         if not data:
                             break
-                        # Prefer writing directly to curses Writer window if present
-                        written_to_curses = False
+                        text = data.decode('utf-8', errors='replace')
                         try:
-                            # Use the original sys.stdout object captured earlier (old_sys_stdout)
-                            sd = old_sys_stdout
-                            # If sd looks like the Writer (has win and lock), let it handle ANSI and scrolling
-                            if hasattr(sd, 'write') and hasattr(sd, 'win') and hasattr(sd, 'lock'):
-                                try:
-                                    text = data.decode('utf-8', errors='replace')
-                                    sd.write(text)
-                                    try:
-                                        sd.flush()
-                                    except Exception:
-                                        pass
-                                    written_to_curses = True
-                                except Exception:
-                                    written_to_curses = False
-                            else:
-                                # Fallback: attempt safe sys.stdout.write
-                                sd2 = sys.stdout
-                                try:
-                                    fil = None
-                                    try:
-                                        fil = sd2.fileno()
-                                    except Exception:
-                                        fil = None
-                                    if fil is not None and fil == pipe_write:
-                                        raise Exception('stdout is pipe')
-                                    sd2.write(data.decode('utf-8', errors='replace'))
-                                    sd2.flush()
-                                except Exception:
-                                    os.write(original_stdout_fd, data)
+                            # Drain remaining data into file-only writer
+                            async_file_writer.put(text)
                         except Exception:
-                            try:
-                                os.write(original_stdout_fd, data)
-                            except Exception:
-                                pass
-
-                        # Write to log file (always try)
-                        try:
-                            log_file.write(data.decode('utf-8', errors='replace'))
-                            log_file.flush()
-                        except ValueError:
-                            # Log file closed by main thread; exit reader
-                            break
+                            # don't write raw bytes to original stdout (would corrupt terminal)
+                            pass
                         with buffer_lock:
                             output_buffer.append(data)
-                except (OSError, IOError):
-                    break
-
-            # Drain remaining data
-            try:
-                while True:
-                    data = os.read(pipe_read, 4096)
-                    if not data:
-                        break
-                    # Drain remaining data; use same direct-to-curses logic as above
-                    try:
-                        sd = sys.stdout
-                        if hasattr(sd, 'write') and hasattr(sd, 'win') and hasattr(sd, 'lock'):
-                            try:
-                                text = data.decode('utf-8', errors='replace')
-                                sd.write(text)
-                                try:
-                                    sd.flush()
-                                except Exception:
-                                    pass
-                            except Exception:
-                                try:
-                                    os.write(original_stdout_fd, data)
-                                except Exception:
-                                    pass
-                        else:
-                            try:
-                                fil = None
-                                try:
-                                    fil = sd.fileno()
-                                except Exception:
-                                    fil = None
-                                if fil is not None and fil == pipe_write:
-                                    raise Exception('stdout is pipe')
-                                sd.write(data.decode('utf-8', errors='replace'))
-                                sd.flush()
-                            except Exception:
-                                os.write(original_stdout_fd, data)
-                    except Exception:
-                        try:
-                            os.write(original_stdout_fd, data)
-                        except Exception:
-                            pass
-
-                    try:
-                        log_file.write(data.decode('utf-8', errors='replace'))
-                        log_file.flush()
-                    except ValueError:
-                        break
-                    with buffer_lock:
-                        output_buffer.append(data)
-            except (OSError, IOError):
-                pass
+                except Exception:
+                    pass
 
         # Start reader thread (non-daemon so we can join reliably)
         reader = threading.Thread(target=reader_thread, daemon=False)
@@ -349,6 +313,13 @@ class StepRunner:
             # Close the write end of the pipe to signal EOF
             try:
                 os.close(pipe_write)
+            except Exception:
+                pass
+
+            # Restore original file descriptors so FD1 no longer points to pipe (allow reader to see EOF)
+            try:
+                os.dup2(original_stdout_fd, 1)
+                os.dup2(original_stderr_fd, 2)
             except Exception:
                 pass
 
@@ -368,14 +339,6 @@ class StepRunner:
             except Exception:
                 pass
 
-
-            # Restore original file descriptors
-            try:
-                os.dup2(original_stdout_fd, 1)
-                os.dup2(original_stderr_fd, 2)
-            except Exception:
-                pass
-
             # Close our duplicates
             try:
                 os.close(original_stdout_fd)
@@ -387,6 +350,18 @@ class StepRunner:
                 pass
             try:
                 os.close(pipe_read)
+            except Exception:
+                pass
+
+            # Ensure asynchronous writers have flushed pending writes
+            try:
+                if 'async_top_writer' in locals():
+                    async_top_writer.stop()
+            except Exception:
+                pass
+            try:
+                if 'async_file_writer' in locals():
+                    async_file_writer.stop()
             except Exception:
                 pass
 

@@ -15,9 +15,11 @@ from pathlib import Path
 CSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 # Matches ESC followed by '(' or ')' sequences like ESC ( B
 ESC_TWO_RE = re.compile(r"\x1b[\(\)][ -/]*[@-~]")
-# Catch-all: ESC followed by a single char
+# Catch-all: ESC followed by a single char (used for bottom cleaning)
 ESC_CHAR_RE = re.compile(r"\x1b.")
 CONTROL_RE_PLAIN = re.compile(r"[\x00-\x1f\x7f]")
+# For Writer: regex to remove CSI sequences that are NOT SGR (i.e., not ending with 'm')
+NON_SGR_CSI_RE = re.compile(r"\x1b\[(?![0-9;]*m)[0-9;?]*[ -/]*[@-~]")
 
 
 class Writer:
@@ -45,8 +47,54 @@ class Writer:
 
     def write(self, text):
         with self.lock:
-            # Remove control characters
+            # Convert carriage returns to newlines so progress updates become new lines
+            try:
+                text = text.replace('\r', '\n')
+            except Exception:
+                pass
+            # Remove control characters (non-CSI control bytes)
             text = self.CONTROL_RE.sub("", text)
+
+            # Protect SGR (\x1b[...m) sequences, strip all other CSI/ESC, then restore SGR
+            try:
+                sgrs = []
+                new_parts = []
+                last = 0
+                for i, m in enumerate(self.ANSI_RE.finditer(text)):
+                    sgrs.append(m.group(0))
+                    new_parts.append(text[last:m.start()])
+                    new_parts.append(f"__SGR_{i}__")
+                    last = m.end()
+                new_parts.append(text[last:])
+                t = "".join(new_parts)
+
+                # Remove all remaining CSI/ESC sequences (non-SGR)
+                try:
+                    t = CSI_RE.sub("", t)
+                except Exception:
+                    pass
+                try:
+                    t = ESC_TWO_RE.sub("", t)
+                except Exception:
+                    pass
+                try:
+                    t = ESC_CHAR_RE.sub("", t)
+                except Exception:
+                    pass
+
+                # Remove leftover lone '[' followed by digits/semicolons from incomplete sequences
+                try:
+                    t = re.sub(r"\[[0-9;?]*", "", t)
+                except Exception:
+                    pass
+
+                # Restore SGR tokens
+                for i, sgr in enumerate(sgrs):
+                    t = t.replace(f"__SGR_{i}__", sgr)
+
+                text = t
+            except Exception:
+                pass
 
             try:
                 h, w = self.win.getmaxyx()
@@ -145,6 +193,11 @@ class Writer:
 
                 for part, code in parts:
                     if code is None:
+                        try:
+                            # remove any leftover ESC+char sequences that are not SGR (these can be cursor controls)
+                            part = ESC_CHAR_RE.sub("", part)
+                        except Exception:
+                            pass
                         buf += part
                     else:
                         # flush current buffer before processing code
@@ -374,6 +427,11 @@ class CursesUI:
                                 f.seek(last_pos)
                                 data = f.read()
                                 if data:
+                                    # Normalize carriage returns to newlines
+                                    try:
+                                        data = data.replace('\r', '\n')
+                                    except Exception:
+                                        pass
                                     # Strip ANSI/terminal control sequences for bottom pane
                                     clean = CSI_RE.sub("", data)
                                     clean = ESC_TWO_RE.sub("", clean)
