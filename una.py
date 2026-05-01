@@ -15,9 +15,6 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-# Global flag: set to True if curses fails, to disable pipe capture in StepRunner
-CURSES_FAILED = False
-
 from mods.utils import (
     init_or_reset_repo,
     get_target_triple,
@@ -106,11 +103,12 @@ def load_repo_una(repo_dir: str, una_file_name: str = "una.py"):
 
 
 class StepRunner:
-    def __init__(self, arch, staging_dir, target_dir, bld_base):
+    def __init__(self, arch, staging_dir, target_dir, bld_base, use_pipe_capture=False):
         self.arch = arch
         self.staging_dir = staging_dir
         self.target_dir = target_dir
         self.bld_base = bld_base
+        self.use_pipe_capture = use_pipe_capture
         self.component_snapshots = {}  # name -> {staging: {}, target: {}}
         self.cleaned_components = set()
         # Create build_logs directory at same level as report
@@ -162,13 +160,12 @@ class StepRunner:
         # Open log file
         log_file = open(log_file_path, "w")
 
-        # Only use pipe/thread capture if stdout is NOT a real terminal
-        # (i.e., when curses is active). When in non-curses mode, write directly.
+        # Only use pipe/thread capture if requested (when curses is active)
+        # When in non-curses mode, write directly without capture
         # Check the ORIGINAL stdout, not any replaced object that may not have isatty()
-        # Also check global CURSES_FAILED flag - if curses failed, don't use pipe capture
-        global CURSES_FAILED
         original_stdout_is_tty = old_sys_stdout.isatty() if hasattr(old_sys_stdout, 'isatty') else False
-        use_pipe_capture = not original_stdout_is_tty and not CURSES_FAILED
+        # Use pipe capture only if explicitly requested AND stdout is not a real terminal
+        use_pipe_capture = self.use_pipe_capture and not original_stdout_is_tty
 
         pipe_read, pipe_write = None, None
         async_top_writer = None
@@ -205,19 +202,12 @@ class StepRunner:
                             if item is None:
                                 break
                             text = item
-                            # Separate handling for log file vs top window
+                            # Strip \r characters before writing (handles both log file and curses Writer)
                             if isinstance(text, str):
-                                # For log file: normalize all CR variants to LF so bottom pane displays correctly
-                                text_for_log = text.replace('\r\n', '\n').replace('\r', '\n')
-                            else:
-                                text_for_log = text
-                            
-                            # For top window: pass original text unchanged - curses Writer handles normalization
-                            text_for_top = text
-                            
+                                text = text.replace('\r', '')
                             try:
                                 if hasattr(self.logfile, 'write'):
-                                    self.logfile.write(text_for_log)
+                                    self.logfile.write(text)
                                     try:
                                         self.logfile.flush()
                                         # Force sync to disk for immediate visibility
@@ -233,7 +223,7 @@ class StepRunner:
                             if self.write_to_top and self.writer is not None:
                                 try:
                                     if hasattr(self.writer, 'write'):
-                                        self.writer.write(text_for_top)
+                                        self.writer.write(text)
                                         try:
                                             self.writer.flush()
                                         except Exception:
@@ -269,10 +259,10 @@ class StepRunner:
                         except Exception:
                             pass
 
-                # Writer for top pane (Python prints)
+                # Writer for top pane (Python prints only)
                 async_top_writer = AsyncLogWriter(old_sys_stdout, log_file, write_to_top=True)
-                # Writer for subprocess output -> both log file and top window
-                async_file_writer = AsyncLogWriter(old_sys_stdout, log_file, write_to_top=True)
+                # Writer for subprocess output -> log file only (no curses display)
+                async_file_writer = AsyncLogWriter(None, log_file, write_to_top=False)
 
                 class StdoutReplacer:
                     def __init__(self, aw):
@@ -280,8 +270,16 @@ class StepRunner:
                     def write(self, txt):
                         # Queue writes so the main thread never holds the curses Writer lock
                         try:
-                            # Don't filter here - let AsyncLogWriter handle line ending normalization
+                            # Strip \r characters to prevent garbled output
+                            if isinstance(txt, str):
+                                txt = txt.replace('\r', '')
                             self.aw.put(txt)
+                        except Exception:
+                            pass
+                        return len(txt)
+                    def flush(self):
+                        try:
+                            self.aw.flush()
                         except Exception:
                             pass
                         return len(txt)
@@ -319,7 +317,6 @@ class StepRunner:
                         if not data:
                             break
                         text = data.decode('utf-8', errors='replace')
-                        # Don't filter carriage returns here - AsyncLogWriter handles normalization
                         try:
                             # Send subprocess/pipe data only to file writer
                             if async_file_writer:
@@ -337,7 +334,6 @@ class StepRunner:
                             if not data:
                                 break
                             text = data.decode('utf-8', errors='replace')
-                            # Don't filter carriage returns here - let AsyncLogWriter handle it
                             try:
                                 # Drain remaining data into file-only writer
                                 if async_file_writer:
@@ -962,7 +958,10 @@ def main():
         except Exception:
             pass
 
-        if not args.no_curses and sys.stdout.isatty():
+        # Try curses mode, fall back to non-curses if it fails
+        use_curses = not args.no_curses and sys.stdout.isatty()
+
+        if use_curses:
             try:
                 from mods.curses_ui import CursesUI
                 from mods.build import init_build, run_build
@@ -1011,9 +1010,8 @@ def main():
                 colors.warn(
                     f"Warning: curses UI failed ({e}), falling back to non-curses mode"
                 )
-                # Set global flag to disable pipe capture in StepRunner
-                global CURSES_FAILED
-                CURSES_FAILED = True
+                # Mark curses as failed so StepRunner doesn't use pipe capture
+                use_curses = False
                 # Restore terminal in case curses partially initialized
                 try:
                     import curses
@@ -1052,6 +1050,7 @@ def main():
             tools_install_dir,
             skel_dir,
             global_cfg,
+            use_curses,
         )
         run_build(args)
         return

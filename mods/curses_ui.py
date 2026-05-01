@@ -59,9 +59,9 @@ class Writer:
 
     def write(self, text):
         with self.lock:
-            # Convert carriage returns to newlines so progress updates become new lines
+            # Strip carriage returns to prevent garbled output (overwriting lines)
             try:
-                text = text.replace('\r', '\n')
+                text = text.replace('\r', '')
             except Exception:
                 pass
             # Remove control characters (non-CSI control bytes)
