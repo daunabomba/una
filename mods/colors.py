@@ -1,12 +1,9 @@
 import sys
 
-# Check if output is a terminal
-IS_TTY = sys.stdout.isatty()
-
 
 def _color(text, color_code, bold=False):
     """Add color codes only if output is a terminal."""
-    if not IS_TTY:
+    if not sys.stdout.isatty():
         return text
     bold_code = "\033[1m" if bold else ""
     return f"\033[{color_code}m{bold_code}{text}\033[0m"

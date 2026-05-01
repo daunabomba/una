@@ -91,7 +91,7 @@ class Writer:
 
                 # Remove isolated '[' only if it's at the very end (incomplete CSI sequence)
                 try:
-                    t = re.sub(r"\[\Z", "", t)
+                    t = re.sub(r"\[$", "", t)
                 except Exception:
                     pass
 
@@ -132,7 +132,7 @@ class Writer:
                         for idx, line in enumerate(lines):
                             y, x = self.win.getyx()
                             if line:
-                                truncated = line[: max(w - 1, 0)]
+                                truncated = line[:max(w - 1, 0)]
                                 try:
                                     self.win.addstr(y, 0, truncated, attr)
                                     self.win.clrtoeol()
@@ -391,7 +391,6 @@ class CursesUI:
                             with open(cur, "r") as f:
                                 f.seek(last_pos)
                                 data = f.read()
-                                data = None
                                 if data:
                                     # Normalize \r\n to \n, but preserve standalone \r for cursor positioning
                                     try:
@@ -421,7 +420,7 @@ class CursesUI:
                                                     self.bottom.move(y, 0)
 
                                                 if part:
-                                                    truncated = part[: w - 1]
+                                                    truncated = part[:max(w - 1, 0)]
                                                     try:
                                                         self.bottom.addstr(y, 0, truncated)
                                                         self.bottom.clrtoeol()
