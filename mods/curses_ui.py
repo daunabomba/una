@@ -439,9 +439,10 @@ class CursesUI:
                                 f.seek(last_pos)
                                 data = f.read()
                                 if data:
-                                    # Normalize carriage returns to newlines
+                                    # Line endings should already be normalized to \n by AsyncLogWriter
+                                    # but we handle any edge cases
                                     try:
-                                        data = data.replace('\r', '\n')
+                                        data = data.replace('\r\n', '\n').replace('\r', '\n')
                                     except Exception:
                                         pass
                                     # Strip ANSI/terminal control sequences for bottom pane

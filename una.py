@@ -205,12 +205,18 @@ class StepRunner:
                             if item is None:
                                 break
                             text = item
-                            # Filter carriage returns to prevent garbled output
+                            # Separate handling for log file (normalize line endings) vs top window (strip CR)
+                            text_for_log = text
+                            text_for_top = text
                             if isinstance(text, str):
-                                text = text.replace('\r', '')
+                                # For log file: normalize all CR variants to LF so bottom pane displays correctly
+                                text_for_log = text.replace('\r\n', '\n').replace('\r', '\n')
+                                # For top window: filter out CR to let curses handle newlines
+                                text_for_top = text.replace('\r', '')
+                            
                             try:
                                 if hasattr(self.logfile, 'write'):
-                                    self.logfile.write(text)
+                                    self.logfile.write(text_for_log)
                                     try:
                                         self.logfile.flush()
                                     except Exception:
@@ -221,7 +227,7 @@ class StepRunner:
                             if self.write_to_top and self.writer is not None:
                                 try:
                                     if hasattr(self.writer, 'write'):
-                                        self.writer.write(text)
+                                        self.writer.write(text_for_top)
                                         try:
                                             self.writer.flush()
                                         except Exception:
@@ -268,9 +274,7 @@ class StepRunner:
                     def write(self, txt):
                         # Queue writes so the main thread never holds the curses Writer lock
                         try:
-                            # Filter out carriage returns to prevent garbled output
-                            if isinstance(txt, str):
-                                txt = txt.replace('\r', '')
+                            # Don't filter here - let AsyncLogWriter handle line ending normalization
                             self.aw.put(txt)
                         except Exception:
                             pass
