@@ -178,8 +178,13 @@ class StepRunner:
                         data = os.read(pipe_read, 4096)
                         if not data:
                             break
-                        # Write to original stdout and log file
-                        os.write(original_stdout_fd, data)
+                        # Write to sys.stdout (so curses Writer can capture) and log file
+                        try:
+                            sys.stdout.write(data.decode("utf-8", errors="replace"))
+                            sys.stdout.flush()
+                        except Exception:
+                            # Fallback to raw FD write if sys.stdout not usable
+                            os.write(original_stdout_fd, data)
                         log_file.write(data.decode("utf-8", errors="replace"))
                         log_file.flush()
                         with buffer_lock:
@@ -193,7 +198,11 @@ class StepRunner:
                     data = os.read(pipe_read, 4096)
                     if not data:
                         break
-                    os.write(original_stdout_fd, data)
+                    try:
+                        sys.stdout.write(data.decode("utf-8", errors="replace"))
+                        sys.stdout.flush()
+                    except Exception:
+                        os.write(original_stdout_fd, data)
                     log_file.write(data.decode("utf-8", errors="replace"))
                     log_file.flush()
                     with buffer_lock:
@@ -814,7 +823,8 @@ def main():
                 )
                 # Determine log_dir from conf name
                 conf_name = Path(conf_files[0]).stem
-                log_dir = str(BASE_DIR / "bld" / conf_name / "x32" / "build_logs")
+                arch_for_logs = arches[0] if arches else "x32"
+                log_dir = str(BASE_DIR / "bld" / conf_name / arch_for_logs / "build_logs")
                 ui = CursesUI(log_dir=log_dir)
                 # Pass the build function to run in background
                 ui.start(run_build, args)
