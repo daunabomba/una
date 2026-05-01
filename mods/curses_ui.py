@@ -16,7 +16,8 @@ class Writer:
     """File-like object that writes to a curses window."""
 
     ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
-    CONTROL_RE = re.compile(r"[\r\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+    # Preserve ESC (\x1b) so ANSI sequences remain for parsing
+    CONTROL_RE = re.compile(r"[\r\x00-\x08\x0b\x0c\x0e-\x1a\x1c-\x1f\x7f]")
 
     def __init__(self, win, lock):
         self.win = win
@@ -192,6 +193,12 @@ class CursesUI:
         curses.noecho()
         curses.cbreak()
         stdscr.keypad(True)
+        # Clear the screen to remove any prior terminal output and avoid overlap
+        try:
+            stdscr.clear()
+            stdscr.refresh()
+        except Exception:
+            pass
         curses.start_color()
         has_colors = curses.has_colors()
         if has_colors:
