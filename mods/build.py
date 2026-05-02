@@ -9,6 +9,8 @@ import json
 import shutil
 from pathlib import Path
 import contextlib
+import threading
+import queue
 
 from mods.trace import (
     is_enabled,
@@ -189,8 +191,9 @@ def run_build(args):
 
     if tools_to_build:
         colors.info("\n--- Tools Stage ---")
-        # Create build_logs directory for tools
-        tools_build_logs_dir = bld_base / "tools" / "build_logs"
+        # Create build_logs directory for tools in the arch-specific directory so curses UI can see them
+        first_arch = arches[0] if arches else "x32"
+        tools_build_logs_dir = bld_base / first_arch / "build_logs"
         tools_build_logs_dir.mkdir(parents=True, exist_ok=True)
         
         if is_enabled():
@@ -205,8 +208,136 @@ def run_build(args):
             
             original_stdout_fd = os.dup(1)
             original_stderr_fd = os.dup(2)
+            old_sys_stdout = sys.stdout
+            old_sys_stderr = sys.stderr
+            
             try:
-                with open(log_file_path, "w") as log_file:
+                log_file = open(log_file_path, "w")
+                
+                # If curses is active, use pipe capture to write to both curses UI and log file
+                if use_curses and hasattr(old_sys_stdout, 'write'):
+                    pipe_read, pipe_write = os.pipe()
+                    
+                    # Redirect FD stdout/stderr to pipe
+                    os.dup2(pipe_write, 1)
+                    os.dup2(pipe_write, 2)
+                    
+                    # Create async writer to handle both log file and curses UI
+                    class AsyncLogWriter:
+                        def __init__(self, writer_obj, logfile):
+                            self.writer = writer_obj
+                            self.logfile = logfile
+                            self.q = queue.Queue()
+                            self.thread = threading.Thread(target=self._run, daemon=True)
+                            self.thread.start()
+                        
+                        def _run(self):
+                            while True:
+                                try:
+                                    item = self.q.get()
+                                except Exception:
+                                    continue
+                                if item is None:
+                                    break
+                                text = item
+                                if isinstance(text, str):
+                                    text = text.replace('\r', '')
+                                try:
+                                    if hasattr(self.logfile, 'write'):
+                                        self.logfile.write(text)
+                                        try:
+                                            self.logfile.flush()
+                                            os.fsync(self.logfile.fileno())
+                                        except Exception:
+                                            pass
+                                except Exception:
+                                    pass
+                                # Write to curses UI
+                                if self.writer is not None:
+                                    try:
+                                        if hasattr(self.writer, 'write'):
+                                            self.writer.write(text)
+                                            try:
+                                                self.writer.flush()
+                                            except Exception:
+                                                pass
+                                    except Exception:
+                                        pass
+                                try:
+                                    self.q.task_done()
+                                except Exception:
+                                    pass
+                            try:
+                                if hasattr(self.logfile, 'flush'):
+                                    self.logfile.flush()
+                            except Exception:
+                                pass
+                        
+                        def put(self, txt):
+                            try:
+                                self.q.put(txt)
+                            except Exception:
+                                pass
+                        
+                        def flush(self):
+                            try:
+                                self.q.join()
+                            except Exception:
+                                pass
+                    
+                    async_writer = AsyncLogWriter(old_sys_stdout, log_file)
+                    
+                    # Rebind sys.stdout/stderr to StdoutReplacer that queues writes
+                    class StdoutReplacer:
+                        def __init__(self, aw):
+                            self.aw = aw
+                        def write(self, txt):
+                            try:
+                                if isinstance(txt, str):
+                                    txt = txt.replace('\r', '')
+                                self.aw.put(txt)
+                            except Exception:
+                                pass
+                            return len(txt)
+                        def flush(self):
+                            try:
+                                self.aw.flush()
+                            except Exception:
+                                pass
+                        def isatty(self):
+                            return False
+                    
+                    sys.stdout = StdoutReplacer(async_writer)
+                    sys.stderr = sys.stdout
+                    
+                    # Pipe reader thread
+                    def reader_thread():
+                        while True:
+                            try:
+                                data = os.read(pipe_read, 4096)
+                                if not data:
+                                    break
+                                async_writer.put(data.decode('utf-8', errors='replace'))
+                            except Exception:
+                                break
+                    
+                    reader = threading.Thread(target=reader_thread, daemon=True)
+                    reader.start()
+                    
+                    # Run tool build
+                    if hasattr(module, "tools_configure"):
+                        module.tools_configure(tools_install_dir, arches=get_all_arches())
+                    if hasattr(module, "tools_build"):
+                        module.tools_build(tools_install_dir)
+                    if hasattr(module, "tools_install"):
+                        module.tools_install(tools_install_dir)
+                    
+                    # Close pipe to signal end
+                    os.close(pipe_write)
+                    reader.join(timeout=2)
+                    async_writer.q.put(None)
+                else:
+                    # Non-curses mode: write directly to file
                     os.dup2(log_file.fileno(), 1)
                     os.dup2(log_file.fileno(), 2)
                     if hasattr(module, "tools_configure"):
@@ -220,6 +351,12 @@ def run_build(args):
                 os.dup2(original_stderr_fd, 2)
                 os.close(original_stdout_fd)
                 os.close(original_stderr_fd)
+                sys.stdout = old_sys_stdout
+                sys.stderr = old_sys_stderr
+                try:
+                    log_file.close()
+                except Exception:
+                    pass
         
         if is_enabled():
             tools_step_end("tools_configure")
