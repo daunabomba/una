@@ -292,8 +292,9 @@ class CursesUI:
 
         # Draw header on top window
         try:
+            top_h_actual, top_w_actual = self.top.getmaxyx()
             self.top.addstr(0, 0, "=== Una Output ===", curses.A_BOLD | color1)
-            self.top.hline(1, 0, curses.ACS_HLINE, self.w)
+            self.top.hline(1, 0, curses.ACS_HLINE, top_w_actual)
         except Exception:
             pass
         self.top.refresh()
@@ -307,8 +308,9 @@ class CursesUI:
 
         # Draw headers on bottom window
         try:
+            bot_h_actual, bot_w_actual = self.bottom.getmaxyx()
             self.bottom.addstr(0, 0, "=== Build Logs ===", curses.A_BOLD | color2)
-            self.bottom.hline(1, 0, curses.ACS_HLINE, self.w)
+            self.bottom.hline(1, 0, curses.ACS_HLINE, bot_w_actual)
         except Exception:
             pass
         self.bottom.refresh()
@@ -375,24 +377,29 @@ class CursesUI:
                             last_pos = 0
 
                             with self.lock:
-                                # Clear bottom window and redraw header
                                 self.bottom.clear()
-                                self.bottom.addstr(
-                                    0,
-                                    0,
-                                    "=== {} ===".format(cur.name),
-                                    curses.A_BOLD | curses.color_pair(2),
-                                )
-                                self.bottom.hline(1, 0, curses.ACS_HLINE, self.w)
-                                self.bottom.move(2, 0)
-                                self.bottom.refresh()
+                                try:
+                                    bot_h, bot_w = self.bottom.getmaxyx()
+                                    self.bottom.addstr(
+                                        0, 0,
+                                        "=== {} ===".format(cur.name),
+                                        curses.A_BOLD | curses.color_pair(2),
+                                    )
+                                    self.bottom.hline(1, 0, curses.ACS_HLINE, bot_w)
+                                    self.bottom.move(2, 0)
+                                except Exception:
+                                    pass
+                                try:
+                                    self.bottom.refresh()
+                                except Exception:
+                                    pass
 
                         try:
                             with open(cur, "r") as f:
                                 f.seek(last_pos)
                                 data = f.read()
                                 if data:
-                                    # Normalize \r\n to \n, but preserve standalone \r for cursor positioning
+                                    # Normalize \r\n to \n
                                     try:
                                         data = data.replace('\r\n', '\n')
                                     except Exception:
@@ -401,62 +408,28 @@ class CursesUI:
                                     clean = CSI_RE.sub("", data)
                                     clean = ESC_TWO_RE.sub("", clean)
                                     clean = ESC_CHAR_RE.sub("", clean)
-                                    # Remove control chars except \r and \n
                                     clean = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1a\x1c-\x1f\x7f]", "", clean)
                                     with self.lock:
-                                        h, w = self.bottom.getmaxyx()
-                                        
-                                        # Track current line number explicitly (starts after header)
                                         try:
-                                            cur_y = self.bottom.getyx()[0]
-                                        except Exception:
-                                            cur_y = 2
-                                        
-                                        # Process text handling \r by moving cursor to column 0
-                                        lines = clean.split("\n")
-                                        for line in lines:
-                                            # Split by \r and write each segment (overwrite same line)
-                                            parts = line.split('\r')
-                                            
-                                            for i, part in enumerate(parts):
-                                                if i > 0:
-                                                    # \r moves cursor to column 0 on same line
+                                            bot_h, bot_w = self.bottom.getmaxyx()
+                                            # Start at line 2 (after header), let curses handle scrolling
+                                            self.bottom.move(2, 0)
+                                            # Write each line, let curses scroll naturally
+                                            for line in clean.split("\n"):
+                                                if line:
                                                     try:
-                                                        self.bottom.move(cur_y, 0)
+                                                        self.bottom.addstr(line[:bot_w - 1])
                                                     except Exception:
                                                         pass
-                                                
-                                                if part:
-                                                    truncated = part[:max(w - 1, 0)]
-                                                    try:
-                                                        self.bottom.addstr(cur_y, 0, truncated)
-                                                        self.bottom.clrtoeol()
-                                                    except Exception:
-                                                        try:
-                                                            self.bottom.addstr(cur_y, 0, truncated)
-                                                        except Exception:
-                                                            pass
-                                            
-                                            # Move to next line after processing all \r-separated parts
-                                            cur_y += 1
-                                            if cur_y >= h:
                                                 try:
-                                                    self.bottom.scroll()
+                                                    self.bottom.addstr("\n")
                                                 except Exception:
                                                     pass
-                                                cur_y = h - 1
-                                            try:
-                                                self.bottom.move(cur_y, 0)
-                                            except Exception:
-                                                pass
-                                        
-                                        try:
                                             self.bottom.refresh()
                                         except Exception:
                                             pass
                                     last_pos = f.tell()
                         except (FileNotFoundError, OSError):
-                            # Log file was removed or is inaccessible; reset position
                             last_pos = 0
                 except Exception:
                     pass

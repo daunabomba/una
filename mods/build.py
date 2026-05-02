@@ -11,6 +11,7 @@ from pathlib import Path
 import contextlib
 import threading
 import queue
+import re
 
 from mods.trace import (
     is_enabled,
@@ -41,6 +42,12 @@ tools_install_dir = None
 skel_dir = None
 global_cfg = None
 git_logs_dir = None
+
+
+def strip_ansi_codes(text):
+    """Remove ANSI escape sequences from text."""
+    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    return ansi_escape.sub('', text)
 
 
 @contextlib.contextmanager
@@ -191,9 +198,8 @@ def run_build(args):
 
     if tools_to_build:
         colors.info("\n--- Tools Stage ---")
-        # Create build_logs directory for tools in the arch-specific directory so curses UI can see them
-        first_arch = arches[0] if arches else "x32"
-        tools_build_logs_dir = bld_base / first_arch / "build_logs"
+        # Create build_logs directory for tools at top level
+        tools_build_logs_dir = BASE_DIR / "bld" / "tools" / "build_logs"
         tools_build_logs_dir.mkdir(parents=True, exist_ok=True)
         
         if is_enabled():
@@ -244,7 +250,9 @@ def run_build(args):
                                     text = text.replace('\r', '')
                                 try:
                                     if hasattr(self.logfile, 'write'):
-                                        self.logfile.write(text)
+                                        # Strip ANSI codes for log file
+                                        clean_text = strip_ansi_codes(text)
+                                        self.logfile.write(clean_text)
                                         try:
                                             self.logfile.flush()
                                             os.fsync(self.logfile.fileno())
@@ -252,7 +260,7 @@ def run_build(args):
                                             pass
                                 except Exception:
                                     pass
-                                # Write to curses UI
+                                # Write to curses UI (keep formatting)
                                 if self.writer is not None:
                                     try:
                                         if hasattr(self.writer, 'write'):
