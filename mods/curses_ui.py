@@ -387,7 +387,7 @@ class CursesUI:
                                 self.bottom.move(2, 0)
                                 self.bottom.refresh()
 
-                        if cur.exists():
+                        try:
                             with open(cur, "r") as f:
                                 f.seek(last_pos)
                                 data = f.read()
@@ -405,44 +405,59 @@ class CursesUI:
                                     clean = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1a\x1c-\x1f\x7f]", "", clean)
                                     with self.lock:
                                         h, w = self.bottom.getmaxyx()
-
+                                        
+                                        # Track current line number explicitly (starts after header)
+                                        try:
+                                            cur_y = self.bottom.getyx()[0]
+                                        except Exception:
+                                            cur_y = 2
+                                        
                                         # Process text handling \r by moving cursor to column 0
                                         lines = clean.split("\n")
                                         for line in lines:
-                                            y, x = self.bottom.getyx()
-
-                                            # Split by \r and write each segment
+                                            # Split by \r and write each segment (overwrite same line)
                                             parts = line.split('\r')
-
+                                            
                                             for i, part in enumerate(parts):
                                                 if i > 0:
                                                     # \r moves cursor to column 0 on same line
-                                                    self.bottom.move(y, 0)
-
+                                                    try:
+                                                        self.bottom.move(cur_y, 0)
+                                                    except Exception:
+                                                        pass
+                                                
                                                 if part:
                                                     truncated = part[:max(w - 1, 0)]
                                                     try:
-                                                        self.bottom.addstr(y, 0, truncated)
+                                                        self.bottom.addstr(cur_y, 0, truncated)
                                                         self.bottom.clrtoeol()
                                                     except Exception:
                                                         try:
-                                                            self.bottom.addstr(y, 0, truncated)
+                                                            self.bottom.addstr(cur_y, 0, truncated)
                                                         except Exception:
                                                             pass
-
+                                            
                                             # Move to next line after processing all \r-separated parts
-                                            y, x = self.bottom.getyx()
-                                            if y < h - 1:
-                                                self.bottom.move(y + 1, 0)
-                                            else:
-                                                self.bottom.scroll()
-                                                self.bottom.move(h - 1, 0)
-
+                                            cur_y += 1
+                                            if cur_y >= h:
+                                                try:
+                                                    self.bottom.scroll()
+                                                except Exception:
+                                                    pass
+                                                cur_y = h - 1
+                                            try:
+                                                self.bottom.move(cur_y, 0)
+                                            except Exception:
+                                                pass
+                                        
                                         try:
                                             self.bottom.refresh()
                                         except Exception:
                                             pass
                                     last_pos = f.tell()
+                        except (FileNotFoundError, OSError):
+                            # Log file was removed or is inaccessible; reset position
+                            last_pos = 0
                 except Exception:
                     pass
                 time.sleep(0.2)

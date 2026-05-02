@@ -337,9 +337,25 @@ def run_build(args):
                     reader.join(timeout=2)
                     async_writer.q.put(None)
                 else:
-                    # Non-curses mode: write directly to file
-                    os.dup2(log_file.fileno(), 1)
-                    os.dup2(log_file.fileno(), 2)
+                    # Non-curses mode: tee output to terminal and log file
+                    pipe_read, pipe_write = os.pipe()
+                    os.dup2(pipe_write, 1)
+                    os.dup2(pipe_write, 2)
+
+                    def _tee_thread():
+                        try:
+                            while True:
+                                data = os.read(pipe_read, 4096)
+                                if not data:
+                                    break
+                                os.write(original_stdout_fd, data)
+                                log_file.write(data.decode(errors="replace"))
+                                log_file.flush()
+                        except Exception:
+                            pass
+
+                    tee_thread = threading.Thread(target=_tee_thread, daemon=True)
+                    tee_thread.start()
                     if hasattr(module, "tools_configure"):
                         module.tools_configure(tools_install_dir, arches=get_all_arches())
                     if hasattr(module, "tools_build"):
@@ -347,12 +363,24 @@ def run_build(args):
                     if hasattr(module, "tools_install"):
                         module.tools_install(tools_install_dir)
             finally:
+                # Close pipe_write to signal EOF to tee thread (non-curses mode)
+                if not use_curses and 'pipe_write' in dir() and pipe_write is not None:
+                    try:
+                        os.close(pipe_write)
+                    except Exception:
+                        pass
                 os.dup2(original_stdout_fd, 1)
                 os.dup2(original_stderr_fd, 2)
                 os.close(original_stdout_fd)
                 os.close(original_stderr_fd)
                 sys.stdout = old_sys_stdout
                 sys.stderr = old_sys_stderr
+                # Wait for tee thread to finish draining remaining data
+                if not use_curses and 'tee_thread' in dir() and tee_thread is not None:
+                    try:
+                        tee_thread.join(timeout=5)
+                    except Exception:
+                        pass
                 try:
                     log_file.close()
                 except Exception:

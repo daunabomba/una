@@ -354,9 +354,25 @@ class StepRunner:
             reader = threading.Thread(target=reader_thread, daemon=False)
             reader.start()
         else:
-            # When not using pipe capture, redirect FD-level stdout/stderr to log file
-            os.dup2(log_file.fileno(), 1)
-            os.dup2(log_file.fileno(), 2)
+            # When not using pipe capture, tee FD-level stdout/stderr to terminal and log file
+            pipe_read_fd, pipe_write_fd = os.pipe()
+            os.dup2(pipe_write_fd, 1)
+            os.dup2(pipe_write_fd, 2)
+
+            def _tee_thread():
+                try:
+                    while True:
+                        data = os.read(pipe_read_fd, 4096)
+                        if not data:
+                            break
+                        os.write(original_stdout_fd, data)
+                        log_file.write(data.decode(errors="replace"))
+                        log_file.flush()
+                except Exception:
+                    pass
+
+            tee_thread = threading.Thread(target=_tee_thread, daemon=True)
+            tee_thread.start()
 
         try:
             # Execute the step function
@@ -386,10 +402,22 @@ class StepRunner:
                     except Exception:
                         pass
             else:
-                # Restore original file descriptors (from non-pipe-capture case)
+                # Close pipe_write to signal EOF to tee thread (non-pipe-capture case)
+                try:
+                    if 'pipe_write_fd' in dir() and pipe_write_fd is not None:
+                        os.close(pipe_write_fd)
+                except Exception:
+                    pass
+                # Restore original file descriptors
                 try:
                     os.dup2(original_stdout_fd, 1)
                     os.dup2(original_stderr_fd, 2)
+                except Exception:
+                    pass
+                # Wait for tee thread to finish draining remaining data
+                try:
+                    if 'tee_thread' in dir() and tee_thread is not None:
+                        tee_thread.join(timeout=5)
                 except Exception:
                     pass
 
