@@ -62,6 +62,10 @@ from mods.trace import (
     tools_step_start,
     tools_step_end,
     trace_deps,
+    trace_file_open,
+    trace_file_close,
+    trace_exception,
+    trace_exit,
 )
 from mods.emulation import get_qemu_command, add_test_disk, get_console_args, run_qemu
 
@@ -157,7 +161,12 @@ class StepRunner:
         old_sys_stderr = sys.stderr
 
         # Open log file
-        log_file = open(log_file_path, "w")
+        trace_file_open(str(log_file_path), "w")
+        try:
+            log_file = open(log_file_path, "w")
+        except Exception as e:
+            trace_exception(f"open({log_file_path})", e)
+            raise
 
         # Only use pipe/thread capture if requested (when curses is active)
         # When in non-curses mode, write directly without capture
@@ -281,12 +290,8 @@ class StepRunner:
                             self.aw.flush()
                         except Exception:
                             pass
-                        return len(txt)
-                    def flush(self):
-                        try:
-                            self.aw.flush()
-                        except Exception:
-                            pass
+                    def isatty(self):
+                        return False
 
                 sys.stdout = StdoutReplacer(async_top_writer)
                 sys.stderr = sys.stdout
@@ -427,8 +432,10 @@ class StepRunner:
 
             # Close log file
             try:
+                trace_file_close(str(log_file_path))
                 log_file.close()
-            except Exception:
+            except Exception as e:
+                trace_exception(f"close({log_file_path})", e)
                 pass
 
         # 3. Post-snapshot and report
@@ -1358,6 +1365,15 @@ def main():
                 print(f"Cleaning {target_dir}...")
                 shutil.rmtree(target_dir)
                 target_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1.5 Clean tools build artifacts and state file so tools will be rebuilt
+        tools_install_dir = BASE_DIR / "bld" / "tools"
+        tools_state_file = tools_install_dir / "tools_state"
+        
+        if tools_install_dir.exists():
+            print(f"Cleaning {tools_install_dir}...")
+            shutil.rmtree(tools_install_dir)
+            tools_install_dir.mkdir(parents=True, exist_ok=True)
 
         # 2. Clean workspace sub-repos
         cleaned_dirs = set()

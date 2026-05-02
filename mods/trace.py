@@ -26,9 +26,29 @@ def is_enabled() -> bool:
 def _write(msg: str) -> None:
     """Write a message to trace file."""
     if _trace_file:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         with open(_trace_file, "a") as f:
             f.write(f"[{timestamp}] {msg}\n")
+
+
+def trace_file_open(filepath: str, mode: str) -> None:
+    """Log file open operation."""
+    _write(f"FILE OPEN: {filepath} (mode={mode})")
+
+
+def trace_file_close(filepath: str) -> None:
+    """Log file close operation."""
+    _write(f"FILE CLOSE: {filepath}")
+
+
+def trace_exception(location: str, exc: Exception) -> None:
+    """Log an exception."""
+    _write(f"EXCEPTION at {location}: {type(exc).__name__}: {exc}")
+
+
+def trace_exit(location: str, returncode: int = 0) -> None:
+    """Log an exit event."""
+    _write(f"EXIT at {location} (code={returncode})")
 
 
 def trace_deps(build_order: list, dep_graph: dict) -> None:
