@@ -227,9 +227,10 @@ class CursesUI:
         self.build_thread = None
         self.build_func = None
         self.build_args = None
+        self.build_result = None
 
     def start(self, build_func, *args, **kwargs):
-        """Start curses UI and run build_func in background."""
+        """Start curses UI and run build_func in background. Returns build result."""
         self.build_func = build_func
         self.build_args = (args, kwargs)
         try:
@@ -242,6 +243,7 @@ class CursesUI:
             except:
                 pass
             raise e
+        return self.build_result
 
     def _main(self, stdscr):
         self.stdscr = stdscr
@@ -332,8 +334,13 @@ class CursesUI:
         # Start build in background thread
         if self.build_func:
             args_tuple, kwargs_dict = self.build_args
+            def run_build_and_capture():
+                try:
+                    self.build_result = self.build_func(*args_tuple, **kwargs_dict)
+                except Exception as e:
+                    self.build_result = False
             self.build_thread = threading.Thread(
-                target=lambda: self.build_func(*args_tuple, **kwargs_dict), daemon=True
+                target=run_build_and_capture, daemon=True
             )
             self.build_thread.start()
 

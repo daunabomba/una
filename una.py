@@ -10,6 +10,7 @@ from pathlib import Path
 import threading
 import select
 import graphlib
+import re
 
 BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
@@ -81,6 +82,12 @@ except ImportError:
 import importlib.util
 
 
+def strip_ansi_codes(text):
+    """Remove ANSI escape sequences from text."""
+    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    return ansi_escape.sub('', text)
+
+
 def load_repo_una(repo_dir: str, una_file_name: str = "una.py"):
     """
     Dynamically load the specified una file from the repo directory.
@@ -115,8 +122,8 @@ class StepRunner:
         self.use_pipe_capture = use_pipe_capture
         self.component_snapshots = {}  # name -> {staging: {}, target: {}}
         self.cleaned_components = set()
-        # Create build_logs directory at same level as report
-        self.build_logs_dir = self.bld_base / self.arch / "build_logs"
+        # Create build_logs directory at tools level
+        self.build_logs_dir = self.bld_base / "tools" / "build_logs"
         self.build_logs_dir.mkdir(parents=True, exist_ok=True)
 
     def run_step(self, cfg, step_name, step_func, **kwargs):
@@ -215,7 +222,9 @@ class StepRunner:
                                 text = text.replace('\r', '')
                             try:
                                 if hasattr(self.logfile, 'write'):
-                                    self.logfile.write(text)
+                                    # Strip ANSI codes for log file
+                                    clean_text = strip_ansi_codes(text)
+                                    self.logfile.write(clean_text)
                                     try:
                                         self.logfile.flush()
                                         # Force sync to disk for immediate visibility
@@ -829,6 +838,23 @@ def main():
         colors.error("Error: --run requires exactly one configuration file.")
         sys.exit(1)
 
+    # Validate --run usage: only with --build (optional) and no other commands
+    if args.run:
+        conflicting_commands = [
+            ('--list', args.list),
+            ('--status', args.status),
+            ('--rebase', args.rebase),
+            ('--save', args.save),
+            ('--checkout', args.checkout),
+            ('--clean', args.clean),
+            ('--report', args.report),
+        ]
+        
+        conflicting = [cmd for cmd, val in conflicting_commands if val]
+        if conflicting:
+            colors.error(f"Error: --run cannot be combined with {', '.join(conflicting)}.")
+            sys.exit(1)
+
     conf_name = Path(conf_files[0]).stem
     bld_base = BASE_DIR / "bld" / conf_name
     tools_install_dir = BASE_DIR / "bld" / "tools"
@@ -1009,7 +1035,7 @@ def main():
         print_top_level_status(BASE_DIR)
         handle_repos(repos, "status")
 
-    if args.build is not None or build_all:
+    if args.build is not None or build_all or args.run:
         # Debug: report why curses UI will or won't be used
         try:
             stderr_msg = (
@@ -1022,6 +1048,7 @@ def main():
 
         # Try curses mode, fall back to non-curses if it fails
         use_curses = not args.no_curses and sys.stdout.isatty()
+        build_result = False
 
         if use_curses:
             try:
@@ -1055,10 +1082,9 @@ def main():
                     use_curses,
                     git_logs_dir,
                 )
-                # Determine log_dir from conf name
+                # Determine log_dir
                 conf_name = Path(conf_files[0]).stem
-                arch_for_logs = arches[0] if arches else "x32"
-                log_dir = str(BASE_DIR / "bld" / conf_name / arch_for_logs / "build_logs")
+                log_dir = str(BASE_DIR / "bld" / conf_name / "tools" / "build_logs")
 
                 # Debug: indicate starting curses UI and the log_dir
                 try:
@@ -1068,9 +1094,17 @@ def main():
                     pass
 
                 ui = CursesUI(log_dir=log_dir)
-                # Pass the build function to run in background
-                ui.start(run_build, args)
-                return
+                # Pass the build function to run in background and capture result
+                build_result = ui.start(run_build, args)
+                
+                # If --run is specified and build succeeded, continue to run; otherwise exit
+                if args.run:
+                    if not build_result:
+                        colors.error("Build failed. Skipping --run.")
+                        sys.exit(1)
+                    # Fall through to run stage below
+                else:
+                    return
             except ImportError:
                 colors.error("Error: curses not available")
                 sys.exit(1)
@@ -1121,8 +1155,16 @@ def main():
             use_curses,
             git_logs_dir,
         )
-        run_build(args)
-        return
+        build_result = run_build(args)
+        
+        # If --run is specified and build succeeded, continue to run; otherwise exit
+        if args.run:
+            if not build_result:
+                colors.error("Build failed. Skipping --run.")
+                sys.exit(1)
+            # Fall through to run stage below
+        else:
+            return
 
     def get_repo_commit(repo_path):
         if not (repo_path / ".git").exists():
