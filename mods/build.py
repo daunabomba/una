@@ -42,6 +42,7 @@ tools_install_dir = None
 skel_dir = None
 global_cfg = None
 git_logs_dir = None
+curses_ui = None
 
 
 def strip_ansi_codes(text):
@@ -89,12 +90,13 @@ def init_build(
     global_cfg_val,
     use_curses_val=False,
     git_logs_dir_val=None,
+    curses_ui_val=None,
 ):
     """Initialize the build module with required functions and variables."""
     global colors, load_repo_una, StepRunner, get_target_triple
     global get_arch_flags, propagate_skel, sync_kernel_config, is_repo_dirty
     global BASE_DIR, bld_base, arches, repos, repos_to_process
-    global required_names, build_all, tools_install_dir, skel_dir, global_cfg, use_curses, git_logs_dir
+    global required_names, build_all, tools_install_dir, skel_dir, global_cfg, use_curses, git_logs_dir, curses_ui
 
     colors = colors_mod
     load_repo_una = load_repo_una_func
@@ -116,6 +118,7 @@ def init_build(
     global_cfg = global_cfg_val
     use_curses = use_curses_val
     git_logs_dir = git_logs_dir_val
+    curses_ui = curses_ui_val
 
 
 def run_build(args):
@@ -414,14 +417,14 @@ def run_build(args):
         arch_bld_dir = bld_base / arch
         staging_dir = arch_bld_dir / "staging"
         target_dir = arch_bld_dir / "target"
-        runner = StepRunner(arch, staging_dir, target_dir, bld_base, use_curses)
+        runner = StepRunner(arch, staging_dir, target_dir, bld_base, use_curses, curses_ui)
 
         # Ensure build directories exist and skel is propagated
         staging_dir.mkdir(parents=True, exist_ok=True)
         target_dir.mkdir(parents=True, exist_ok=True)
         if skel_dir.exists():
             colors.info(f"[{arch}] Phase -1: Skeleton Propagation (verified)")
-            skel_runner = StepRunner(arch, staging_dir, target_dir, bld_base, use_curses)
+            skel_runner = StepRunner(arch, staging_dir, target_dir, bld_base, use_curses, curses_ui)
             skel_runner.run_step(
                 cfg={"name": "skel"}, step_name="propagate", step_func=propagate_skel
             )

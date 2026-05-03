@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 import re
+import queue
 from pathlib import Path
 
 # Regex to remove CSI and other ANSI control sequences for bottom pane
@@ -228,6 +229,7 @@ class CursesUI:
         self.build_func = None
         self.build_args = None
         self.build_result = None
+        self.current_log_queue = queue.Queue()  # For tracking which log file is currently being built
 
     def start(self, build_func, *args, **kwargs):
         """Start curses UI and run build_func in background. Returns build result."""
@@ -357,6 +359,13 @@ class CursesUI:
         finally:
             self.close()
 
+    def set_current_log(self, log_path):
+        """Notify watcher of the current log file being built."""
+        try:
+            self.current_log_queue.put_nowait(log_path)
+        except Exception:
+            pass
+
     def _start_watcher(self):
         """Watch log directory for new logs."""
 
@@ -364,80 +373,69 @@ class CursesUI:
             path = Path(self.log_dir)
             last_log = None
             last_pos = 0
+            current_log_file = None  # Track the file being built from set_current_log()
+            prev_log_file = None  # Track if the log file changed
 
             while self.running:
                 try:
+                    # Check if a new log file has been set by StepRunner
+                    try:
+                        while True:
+                            current_log_file = self.current_log_queue.get_nowait()
+                    except queue.Empty:
+                        pass
+
                     if not path.exists():
                         time.sleep(0.5)
                         continue
 
-                    logs = sorted(
-                        path.glob("*.txt"),
-                        key=lambda p: p.stat().st_mtime,
-                        reverse=True,
-                    )
+                    # If we have a specific log file set, use it; otherwise find the newest
+                    if current_log_file and Path(current_log_file).exists():
+                        cur = Path(current_log_file)
+                    else:
+                        logs = sorted(
+                            path.glob("*.txt"),
+                            key=lambda p: p.stat().st_mtime,
+                            reverse=True,
+                        )
+                        cur = logs[0] if logs else None
 
-                    if logs:
-                        cur = logs[0]
-                        if cur != last_log:
-                            last_log = cur
-                            last_pos = 0
+                    if not cur:
+                        time.sleep(0.2)
+                        continue
 
-                            with self.lock:
-                                self.bottom.clear()
-                                try:
-                                    bot_h, bot_w = self.bottom.getmaxyx()
-                                    self.bottom.addstr(
-                                        0, 0,
-                                        "=== {} ===".format(cur.name),
-                                        curses.A_BOLD | curses.color_pair(2),
-                                    )
-                                    self.bottom.hline(1, 0, curses.ACS_HLINE, bot_w)
-                                    self.bottom.move(2, 0)
-                                except Exception:
-                                    pass
-                                try:
-                                    self.bottom.refresh()
-                                except Exception:
-                                    pass
+                    # Force update if the log file changed (either from queue or filesystem)
+                    if cur != last_log or current_log_file != prev_log_file:
+                        last_log = cur
+                        last_pos = 0
+                        prev_log_file = current_log_file
 
-                        try:
-                            with open(cur, "r") as f:
-                                f.seek(last_pos)
-                                data = f.read()
-                                if data:
-                                    # Normalize \r\n to \n
-                                    try:
-                                        data = data.replace('\r\n', '\n')
-                                    except Exception:
-                                        pass
-                                    # Strip ANSI/terminal control sequences for bottom pane
-                                    clean = CSI_RE.sub("", data)
-                                    clean = ESC_TWO_RE.sub("", clean)
-                                    clean = ESC_CHAR_RE.sub("", clean)
-                                    clean = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1a\x1c-\x1f\x7f]", "", clean)
-                                    with self.lock:
-                                        try:
-                                            bot_h, bot_w = self.bottom.getmaxyx()
-                                            # Start at line 2 (after header), let curses handle scrolling
-                                            self.bottom.move(2, 0)
-                                            # Write each line, let curses scroll naturally
-                                            for line in clean.split("\n"):
-                                                if line:
-                                                    try:
-                                                        self.bottom.addstr(line[:bot_w - 1])
-                                                    except Exception:
-                                                        pass
-                                                try:
-                                                    self.bottom.addstr("\n")
-                                                except Exception:
-                                                    pass
-                                            self.bottom.refresh()
-                                        except Exception:
-                                            pass
-                                    last_pos = f.tell()
-                        except (FileNotFoundError, OSError):
-                            last_pos = 0
+                        with self.lock:
+                            self.bottom.clear()
+                            try:
+                                bot_h, bot_w = self.bottom.getmaxyx()
+                                self.bottom.addstr(
+                                    0, 0,
+                                    "=== {} ===".format(cur.name),
+                                    curses.A_BOLD | curses.color_pair(2),
+                                )
+                                self.bottom.hline(1, 0, curses.ACS_HLINE, bot_w)
+                                self.bottom.move(2, 0)
+                            except Exception:
+                                pass
+                            try:
+                                self.bottom.refresh()
+                            except Exception:
+                                pass
+
+                    try:
+                        with open(cur, "r") as f:
+                            f.seek(last_pos)
+                            data = f.read()
+                            # Update position tracking so new log files are detected when steps change
+                            last_pos = f.tell()
+                    except (FileNotFoundError, OSError):
+                        last_pos = 0
                 except Exception:
                     pass
                 time.sleep(0.2)

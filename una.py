@@ -114,12 +114,13 @@ def load_repo_una(repo_dir: str, una_file_name: str = "una.py"):
 
 
 class StepRunner:
-    def __init__(self, arch, staging_dir, target_dir, bld_base, use_pipe_capture=False):
+    def __init__(self, arch, staging_dir, target_dir, bld_base, use_pipe_capture=False, curses_ui=None):
         self.arch = arch
         self.staging_dir = staging_dir
         self.target_dir = target_dir
         self.bld_base = bld_base
         self.use_pipe_capture = use_pipe_capture
+        self.curses_ui = curses_ui
         self.component_snapshots = {}  # name -> {staging: {}, target: {}}
         self.cleaned_components = set()
         # Create build_logs directory at tools level
@@ -157,6 +158,10 @@ class StepRunner:
         # 2. Execute step with output capturing to log file
         log_file_path = self.build_logs_dir / f"{name}.txt"
         colors.info(f"[{self.arch}] Build log: {log_file_path}")
+
+        # Notify curses UI of the current log file being built
+        if self.curses_ui:
+            self.curses_ui.set_current_log(str(log_file_path))
 
         # Use file descriptor redirection to capture all output (including subprocesses)
         # Save original stdout and stderr file descriptors
@@ -1059,7 +1064,19 @@ def main():
                 git_logs_dir = bld_base / "git_logs"
                 git_logs_dir.mkdir(parents=True, exist_ok=True)
 
-                # Initialize build module
+                # Determine log_dir
+                conf_name = Path(conf_files[0]).stem
+                log_dir = str(BASE_DIR / "bld" / conf_name / "tools" / "build_logs")
+
+                # Debug: indicate starting curses UI and the log_dir
+                try:
+                    sys.stderr.write(f"DEBUG: Starting CursesUI with log_dir={log_dir}\n")
+                    sys.stderr.flush()
+                except Exception:
+                    pass
+
+                ui = CursesUI(log_dir=log_dir)
+                # Initialize build module with curses_ui instance
                 init_build(
                     colors,
                     load_repo_una,
@@ -1081,19 +1098,8 @@ def main():
                     global_cfg,
                     use_curses,
                     git_logs_dir,
+                    ui,
                 )
-                # Determine log_dir
-                conf_name = Path(conf_files[0]).stem
-                log_dir = str(BASE_DIR / "bld" / conf_name / "tools" / "build_logs")
-
-                # Debug: indicate starting curses UI and the log_dir
-                try:
-                    sys.stderr.write(f"DEBUG: Starting CursesUI with log_dir={log_dir}\n")
-                    sys.stderr.flush()
-                except Exception:
-                    pass
-
-                ui = CursesUI(log_dir=log_dir)
                 # Pass the build function to run in background and capture result
                 build_result = ui.start(run_build, args)
                 
