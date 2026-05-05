@@ -214,6 +214,10 @@ def run_build(args):
             # Redirect tool build output to log file
             log_file_path = tools_build_logs_dir / f"{r['name']}.txt"
             colors.info(f"Tool log: {log_file_path}")
+
+            # Notify curses UI of current log file
+            if curses_ui and hasattr(curses_ui, 'set_current_log'):
+                curses_ui.set_current_log(str(log_file_path))
             
             original_stdout_fd = os.dup(1)
             original_stderr_fd = os.dup(2)

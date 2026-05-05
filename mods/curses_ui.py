@@ -313,7 +313,7 @@ class CursesUI:
         # Draw headers on bottom window
         try:
             bot_h_actual, bot_w_actual = self.bottom.getmaxyx()
-            self.bottom.addstr(0, 0, "=== Build Logs ===", curses.A_BOLD | color2)
+            self.bottom.addstr(0, 0, "=== Building... ===", curses.A_BOLD | color2)
             self.bottom.hline(1, 0, curses.ACS_HLINE, bot_w_actual)
         except Exception:
             pass
@@ -385,6 +385,26 @@ class CursesUI:
                     except queue.Empty:
                         pass
 
+                    # Update header immediately when current_log_file changes
+                    if current_log_file != prev_log_file:
+                        prev_log_file = current_log_file
+                        with self.lock:
+                            try:
+                                bot_h, bot_w = self.bottom.getmaxyx()
+                                self.bottom.addstr(
+                                    0, 0,
+                                    "=== Building {} ===".format(Path(current_log_file).stem),
+                                    curses.A_BOLD | curses.color_pair(2),
+                                )
+                                self.bottom.hline(1, 0, curses.ACS_HLINE, bot_w)
+                                self.bottom.move(2, 0)
+                            except Exception:
+                                pass
+                            try:
+                                self.bottom.refresh()
+                            except Exception:
+                                pass
+
                     if not path.exists():
                         time.sleep(0.5)
                         continue
@@ -404,29 +424,10 @@ class CursesUI:
                         time.sleep(0.2)
                         continue
 
-                    # Force update if the log file changed (either from queue or filesystem)
-                    if cur != last_log or current_log_file != prev_log_file:
+                    # Track the actual file being read
+                    if cur != last_log:
                         last_log = cur
                         last_pos = 0
-                        prev_log_file = current_log_file
-
-                        with self.lock:
-                            self.bottom.clear()
-                            try:
-                                bot_h, bot_w = self.bottom.getmaxyx()
-                                self.bottom.addstr(
-                                    0, 0,
-                                    "=== {} ===".format(cur.name),
-                                    curses.A_BOLD | curses.color_pair(2),
-                                )
-                                self.bottom.hline(1, 0, curses.ACS_HLINE, bot_w)
-                                self.bottom.move(2, 0)
-                            except Exception:
-                                pass
-                            try:
-                                self.bottom.refresh()
-                            except Exception:
-                                pass
 
                     try:
                         with open(cur, "r") as f:
