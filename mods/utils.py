@@ -367,7 +367,7 @@ def get_all_arches() -> list:
 
 def get_target_triple(arch: str) -> str:
     if arch == "x32":
-        return "x32-linux-muslx32"
+        return "x86_64-linux-muslx32"
     elif arch == "x86_64":
         return "x86_64-linux-musl"
     elif arch == "aarch64":
