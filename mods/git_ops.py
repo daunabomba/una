@@ -34,20 +34,20 @@ def handle_top_level_repo(
     print(f"\n--- Top-level Repository (una) ---")
 
     if action == "rebase":
-        print("Fetching from 'una'...")
+        print(f">>> git fetch una")
         top_repo.remotes.una.fetch(progress=TqdmProgress())
         _rebase_and_push(top_repo, "una/una", remote_name="una", squash=squash)
 
     elif action == "save":
-        print("Fetching from 'una'...")
+        print(f">>> git fetch una")
         top_repo.remotes.una.fetch(progress=TqdmProgress())
         _save_and_push(top_repo, "una/una", tag, remote_name="una")
 
     elif action == "checkout":
-        print("Fetching tags for top-level repo...")
-        top_repo.remotes.una.fetch(tags=True)
+        print(f">>> git fetch --tags una")
+        top_repo.remotes.una.fetch(tags=True, progress=TqdmProgress())
         if tag:
-            print(f"Checking out tag '{tag}'...")
+            print(f">>> git checkout {tag}")
             try:
                 top_repo.git.checkout(tag)
             except Exception as e:
@@ -87,6 +87,7 @@ def _handle_status(cfg: dict, r_path: Path):
 
     if r_path.exists() and (r_path / ".git").exists():
         print(f"\n=== Repository: {cfg['name']} ({r_path}) ===")
+        print(f">>> git status -sb")
         subprocess.run(["git", "status", "-sb"], cwd=r_path)
     elif r_path.exists():
         print(f"\n=== Repository: {cfg['name']} ({r_path}) [Not a Git Repo] ===")
@@ -104,10 +105,10 @@ def _handle_repo_operation(cfg: dict, r_path: Path, action: str, tag: str = None
 
     remote_prefix = "origin" if "origin_url" in cfg else "una"
 
-    print(f"Fetching from {remote_prefix}...")
+    print(f">>> git fetch {remote_prefix}")
     repo.remotes[remote_prefix].fetch(progress=TqdmProgress())
     if remote_prefix == "origin" and "una" in repo.remotes:
-        print("Also fetching from una...")
+        print(f">>> git fetch una")
         repo.remotes.una.fetch(progress=TqdmProgress())
 
     if remote_prefix == "una":
@@ -130,7 +131,7 @@ def _handle_repo_operation(cfg: dict, r_path: Path, action: str, tag: str = None
         # For rebase, ignore tag - always rebase onto the appropriate branch
         _rebase_and_push(repo, target_branch, squash=True, tag=cfg.get("tag"))
     elif action == "checkout" and tag:
-        print(f"Checking out tag '{tag}'...")
+        print(f">>> git checkout {tag}")
         try:
             repo.git.checkout(tag)
         except Exception as e:
@@ -142,6 +143,7 @@ def print_top_level_status(base_dir: Path):
     import subprocess
 
     print("=== Top-level Repository (una) ===")
+    print(f">>> git status -sb")
     subprocess.run(["git", "status", "-sb"], cwd=base_dir)
 
 

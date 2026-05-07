@@ -43,6 +43,12 @@ skel_dir = None
 global_cfg = None
 git_logs_dir = None
 curses_ui = None
+# Sync-related globals
+sync_repo_func = None
+save_repo_state_func = None
+repos_config_all = None
+repos_to_sync_set = None
+una_base_str = None
 
 
 def strip_ansi_codes(text):
@@ -91,12 +97,18 @@ def init_build(
     use_curses_val=False,
     git_logs_dir_val=None,
     curses_ui_val=None,
+    sync_repo_func_val=None,
+    save_repo_state_func_val=None,
+    repos_config_all_val=None,
+    repos_to_sync_set_val=None,
+    una_base_str_val=None,
 ):
     """Initialize the build module with required functions and variables."""
     global colors, load_repo_una, StepRunner, get_target_triple
     global get_arch_flags, propagate_skel, sync_kernel_config, is_repo_dirty
     global BASE_DIR, bld_base, arches, repos, repos_to_process
     global required_names, build_all, tools_install_dir, skel_dir, global_cfg, use_curses, git_logs_dir, curses_ui
+    global sync_repo_func, save_repo_state_func, repos_config_all, repos_to_sync_set, una_base_str
 
     colors = colors_mod
     load_repo_una = load_repo_una_func
@@ -119,10 +131,62 @@ def init_build(
     use_curses = use_curses_val
     git_logs_dir = git_logs_dir_val
     curses_ui = curses_ui_val
+    sync_repo_func = sync_repo_func_val
+    save_repo_state_func = save_repo_state_func_val
+    repos_config_all = repos_config_all_val
+    repos_to_sync_set = repos_to_sync_set_val
+    una_base_str = una_base_str_val
+
+
+def _run_sync_phase():
+    """Run git sync for all repos inside the curses UI."""
+    if not sync_repo_func or not repos_config_all or not repos_to_sync_set:
+        return
+
+    colors.info("\n--- Git Sync Stage ---")
+    for cfg in repos_config_all:
+        if cfg.get("is_virtual") or cfg["name"] not in repos_to_sync_set:
+            continue
+        if "repo_dir" not in cfg:
+            continue
+
+        name = cfg["name"]
+        git_log_file = git_logs_dir / f"{name}_git_pre.txt"
+
+        # Update curses UI: repo name in separator, git log in bottom pane
+        if curses_ui:
+            curses_ui.set_status(name)
+            curses_ui.set_current_log(str(git_log_file))
+
+        colors.info(f">>> Syncing repo: {name}")
+
+        # Redirect FD-level stdout/stderr to log file (captures git subprocess output)
+        # Python-level sys.stdout (curses Writer) is unaffected -> status stays in top pane
+        original_stdout_fd = os.dup(1)
+        original_stderr_fd = os.dup(2)
+        try:
+            with open(git_log_file, "w") as f:
+                os.dup2(f.fileno(), 1)
+                os.dup2(f.fileno(), 2)
+                if sync_repo_func(cfg, una_base_str):
+                    save_repo_state_func(cfg)
+        finally:
+            os.dup2(original_stdout_fd, 1)
+            os.dup2(original_stderr_fd, 2)
+            os.close(original_stdout_fd)
+            os.close(original_stderr_fd)
+
+    colors.info("Git sync complete.")
+    # Reset separator for build phase
+    if curses_ui:
+        curses_ui.set_status("Build")
 
 
 def run_build(args):
     """Main build function."""
+    # Run sync phase first (inside curses UI when active)
+    _run_sync_phase()
+
     colors.info("Starting build process.")
     tools_state_file = BASE_DIR / "bld" / "tools" / "tools_state"
 
@@ -463,12 +527,14 @@ def run_build(args):
                     f"[{arch}] ERROR: Repository {r['name']} is dirty. Please commit or stash changes before building."
                 )
                 sys.exit(1)
+            colors.info(f">>> git clean -fdx -e .una_config  (in {r_path})")
             subprocess.run(
                 ["git", "clean", "-fdx", "-e", ".una_config"], cwd=r_path, check=True
             )
             # Ensure submodules are also cleaned
             if (r_path / ".gitmodules").exists():
                 try:
+                    colors.info(f">>> git submodule foreach --recursive git clean -fdx -e .una_config  (in {r_path})")
                     subprocess.run(
                         [
                             "git",
@@ -679,9 +745,11 @@ def run_build(args):
                     with open(git_log_file, "w") as f:
                         os.dup2(f.fileno(), 1)
                         os.dup2(f.fileno(), 2)
+                        print(f">>> git clean -qfdx  (in {r_path})")
                         subprocess.run(["git", "clean", "-qfdx"], cwd=r_path, check=True)
                         if (r_path / ".gitmodules").exists():
                             try:
+                                print(f">>> git submodule foreach --recursive git clean -qfdx  (in {r_path})")
                                 subprocess.run(
                                     [
                                         "git",
@@ -703,9 +771,11 @@ def run_build(args):
                     os.close(original_stdout_fd)
                     os.close(original_stderr_fd)
             else:
+                print(f">>> git clean -qfdx  (in {r_path})")
                 subprocess.run(["git", "clean", "-qfdx"], cwd=r_path, check=True)
                 if (r_path / ".gitmodules").exists():
                     try:
+                        print(f">>> git submodule foreach --recursive git clean -qfdx  (in {r_path})")
                         subprocess.run(
                             [
                                 "git",

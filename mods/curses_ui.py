@@ -288,7 +288,7 @@ class CursesUI:
 
         # Create windows with a separator row between them
         self.top = curses.newwin(top_h, self.w, 0, 0)
-        # Separator will be drawn on stdscr at row = top_h
+        self.sep_row = top_h  # Store separator row for set_status()
         self.bottom = curses.newwin(bot_h, self.w, top_h + sep_h, 0)
 
         self.top.scrollok(True)
@@ -329,9 +329,8 @@ class CursesUI:
         sys.stdout = writer
         sys.stderr = writer
 
-        # Start log watcher for bottom window
-        if self.log_dir:
-            self._start_watcher()
+        # Always start log watcher for bottom window (sync and build both use it)
+        self._start_watcher()
 
         # Start build in background thread
         if self.build_func:
@@ -366,77 +365,133 @@ class CursesUI:
         except Exception:
             pass
 
+    def set_status(self, text):
+        """Update the middle separator line with a status label (e.g. repo name)."""
+        try:
+            with self.lock:
+                if self.stdscr is None:
+                    return
+                # Build the separator: ─── text ───
+                label = f" {text} "
+                total = self.w
+                left_pad = max(0, (total - len(label)) // 2)
+                right_pad = max(0, total - left_pad - len(label))
+                line = "─" * left_pad + label + "─" * right_pad
+                try:
+                    self.stdscr.addstr(self.sep_row, 0, line[:total], curses.A_BOLD)
+                    self.stdscr.refresh()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     def _start_watcher(self):
-        """Watch log directory for new logs."""
+        """Watch log files and display content in bottom pane."""
 
         def watcher():
-            path = Path(self.log_dir)
+            path = Path(self.log_dir) if self.log_dir else None
             last_log = None
             last_pos = 0
-            current_log_file = None  # Track the file being built from set_current_log()
-            prev_log_file = None  # Track if the log file changed
+            current_log_file = None
+            prev_log_file = None
 
             while self.running:
                 try:
-                    # Check if a new log file has been set by StepRunner
+                    # Check if a new log file has been set
                     try:
                         while True:
                             current_log_file = self.current_log_queue.get_nowait()
                     except queue.Empty:
                         pass
 
-                    # Update header immediately when current_log_file changes
+                    # Update header and clear bottom pane when log file changes
                     if current_log_file != prev_log_file:
                         prev_log_file = current_log_file
                         with self.lock:
                             try:
                                 bot_h, bot_w = self.bottom.getmaxyx()
+                                stem = Path(current_log_file).stem if current_log_file else "..."
                                 self.bottom.addstr(
                                     0, 0,
-                                    "=== Building {} ===".format(Path(current_log_file).stem),
+                                    "=== {} ===".format(stem),
                                     curses.A_BOLD | curses.color_pair(2),
                                 )
+                                self.bottom.clrtoeol()
                                 self.bottom.hline(1, 0, curses.ACS_HLINE, bot_w)
+                                # Clear content area
+                                for row in range(2, bot_h):
+                                    try:
+                                        self.bottom.move(row, 0)
+                                        self.bottom.clrtoeol()
+                                    except Exception:
+                                        pass
                                 self.bottom.move(2, 0)
-                            except Exception:
-                                pass
-                            try:
                                 self.bottom.refresh()
                             except Exception:
                                 pass
 
-                    if not path.exists():
-                        time.sleep(0.5)
-                        continue
-
-                    # If we have a specific log file set, use it; otherwise find the newest
+                    # Find current log file to read
                     if current_log_file and Path(current_log_file).exists():
                         cur = Path(current_log_file)
-                    else:
+                    elif path and path.exists():
                         logs = sorted(
                             path.glob("*.txt"),
                             key=lambda p: p.stat().st_mtime,
                             reverse=True,
                         )
                         cur = logs[0] if logs else None
+                    else:
+                        cur = None
 
                     if not cur:
                         time.sleep(0.2)
                         continue
 
-                    # Track the actual file being read
+                    # Reset position when switching files
                     if cur != last_log:
                         last_log = cur
                         last_pos = 0
 
+                    # Read new data from log file
+                    data = ""
                     try:
                         with open(cur, "r") as f:
                             f.seek(last_pos)
                             data = f.read()
-                            # Update position tracking so new log files are detected when steps change
                             last_pos = f.tell()
                     except (FileNotFoundError, OSError):
                         last_pos = 0
+
+                    # Display new data in bottom pane
+                    if data:
+                        with self.lock:
+                            try:
+                                # Clean ANSI/control codes
+                                clean = CSI_RE.sub("", data)
+                                clean = ESC_TWO_RE.sub("", clean)
+                                clean = ESC_CHAR_RE.sub("", clean)
+                                clean = CONTROL_RE_PLAIN.sub("", clean)
+
+                                bot_h, bot_w = self.bottom.getmaxyx()
+                                for line in clean.split("\n"):
+                                    if not line:
+                                        continue
+                                    try:
+                                        y, x = self.bottom.getyx()
+                                        truncated = line[: max(bot_w - 1, 0)]
+                                        self.bottom.addstr(y, 0, truncated)
+                                        self.bottom.clrtoeol()
+                                        next_y = y + 1
+                                        if next_y < bot_h:
+                                            self.bottom.move(next_y, 0)
+                                        else:
+                                            self.bottom.scroll()
+                                            self.bottom.move(bot_h - 1, 0)
+                                    except Exception:
+                                        pass
+                                self.bottom.refresh()
+                            except Exception:
+                                pass
                 except Exception:
                     pass
                 time.sleep(0.2)

@@ -99,7 +99,7 @@ def init_or_reset_repo(
     colors.info(f"Syncing repo: {repo_dir}")
     if not os.path.exists(repo_dir):
         clone_url = origin_url if with_origin else una_url
-        colors.info(f"Cloning repo into {repo_dir} from {clone_url}...")
+        colors.info(f">>> git clone {clone_url} {repo_dir}")
         repo = Repo.clone_from(clone_url, repo_dir, progress=TqdmProgress())
         if not with_origin:
             # If we cloned from una_url, it's currently named 'origin'. Rename it to 'una'.
@@ -114,7 +114,7 @@ def init_or_reset_repo(
             repo.create_remote("origin", origin_url)
         else:
             if str(repo.remotes.origin.url) != origin_url:
-                colors.info(f"Updating origin URL for {repo_dir}")
+                colors.info(f">>> git remote set-url origin {origin_url}")
                 repo.remotes.origin.set_url(origin_url)
 
         # Ensure wildcard refspec so we see ALL branches (fixes the 'master' only issue)
@@ -125,13 +125,13 @@ def init_or_reset_repo(
             pass
 
         if current_fetch != "+refs/heads/*:refs/remotes/origin/*":
-            colors.info(f"Updating origin fetch refspec for {repo_dir}...")
+            colors.info(f">>> git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'")
             repo.git.config(
                 "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"
             )
 
         if reset:
-            colors.info("Fetching latest changes from origin...")
+            colors.info(f">>> git fetch --prune origin")
             repo.remotes.origin.fetch(progress=TqdmProgress(), prune=True)
 
     # 2. Update Una Remote
@@ -139,17 +139,18 @@ def init_or_reset_repo(
         repo.create_remote(remote_una_name, una_url)
     else:
         if str(repo.remotes[remote_una_name].url) != una_url:
-            colors.info(f"Updating una URL for {repo_dir}")
+            colors.info(f">>> git remote set-url {remote_una_name} {una_url}")
             repo.remotes[remote_una_name].set_url(una_url)
 
     # Ensure wildcard refspec for una
+    colors.info(f">>> git config remote.{remote_una_name}.fetch '+refs/heads/*:refs/remotes/{remote_una_name}/*'")
     repo.git.config(
         f"remote.{remote_una_name}.fetch",
         f"+refs/heads/*:refs/remotes/{remote_una_name}/*",
     )
 
     if reset:
-        colors.info(f"Fetching latest changes from {remote_una_name}...")
+        colors.info(f">>> git fetch --tags --prune {remote_una_name}")
         try:
             if is_enabled():
                 from mods.trace import repo_synced
@@ -166,6 +167,7 @@ def init_or_reset_repo(
 
     # 3. Sparse Checkout Management
     if sparse_ignore_dirs:
+        colors.info(f">>> git sparse-checkout init (configuring sparse checkout)")
         repo.config_writer().set_value("core", "sparseCheckout", "true").release()
         repo.config_writer().set_value("core", "sparseCheckoutCone", "false").release()
         repo.config_writer().set_value("index", "sparse", "true").release()
@@ -186,6 +188,7 @@ def init_or_reset_repo(
                 f.write(f"!{dir_pattern}\n")
 
         if reset:
+            colors.info(f">>> git sparse-checkout reapply")
             repo.git.sparse_checkout("reapply")
 
     if not reset:
@@ -199,9 +202,11 @@ def init_or_reset_repo(
                 f"Found existing '{default_branch}' branch on remote. Checking it out to preserve patches..."
             )
             if default_branch in repo.heads:
+                colors.info(f">>> git checkout {default_branch}")
                 repo.heads[default_branch].set_tracking_branch(remote_ref)
                 repo.heads[default_branch].checkout()
             else:
+                colors.info(f">>> git checkout -b {default_branch} --track {remote_ref}")
                 local_branch = repo.create_head(default_branch, remote_ref)
                 local_branch.set_tracking_branch(remote_ref)
                 local_branch.checkout()
@@ -213,6 +218,7 @@ def init_or_reset_repo(
                 f"No remote '{default_branch}' branch found. Initializing branch '{default_branch}' from tag '{tag}'..."
             )
             # Start fresh from the tag since no project branch exists yet
+            colors.info(f">>> git checkout -B {default_branch} {tag}")
             repo.git.checkout("-B", default_branch, tag)
         return repo
 
@@ -244,14 +250,18 @@ def init_or_reset_repo(
         sys.exit(1)
 
     if default_branch in repo.heads:
+        colors.info(f">>> git checkout {default_branch}")
         repo.heads[default_branch].set_tracking_branch(remote_ref)
         repo.heads[default_branch].checkout()
     else:
+        colors.info(f">>> git checkout -b {default_branch} --track {remote_ref}")
         local_branch = repo.create_head(default_branch, remote_ref)
         local_branch.set_tracking_branch(remote_ref)
         local_branch.checkout()
 
+    colors.info(f">>> git clean -fdx")
     repo.git.clean("-fdx")
+    colors.info(f">>> git reset --hard HEAD")
     repo.head.reset(index=True, working_tree=True)
 
     return repo
@@ -271,7 +281,7 @@ def rebase_and_push(
     try:
         if squash:
             # 1. Perform a real rebase first to ensure patches are correctly applied to the new code
-            colors.info(f"Applying patches via rebase onto {branch_name}...")
+            colors.info(f">>> git rebase {branch_name}")
             if is_enabled():
                 from mods.trace import build_step_start, build_step_end
                 build_step_start('git', repo_dir, 'rebase')
@@ -288,7 +298,7 @@ def rebase_and_push(
                 # We still want to push if we just moved our branch to match upstream
             else:
                 # 2. Reset soft to the target branch to squash the results into one commit
-                colors.info("Squashing history into a single commit...")
+                colors.info(f">>> git reset --soft {branch_name}")
                 repo.git.reset("--soft", branch_name)
 
                 # 3. Commit the squashed changes
@@ -297,11 +307,13 @@ def rebase_and_push(
                     msg = f"una: squashed update to tag {tag} (on {branch_name})"
 
                 try:
+                    colors.info(f">>> git commit -m '{msg}'")
                     repo.git.commit("-m", msg)
                 except:
                     colors.info("No changes to squash; already up to date.")
         else:
             # Standard rebase
+            colors.info(f">>> git rebase {branch_name}")
             if is_enabled():
                 from mods.trace import build_step_start, build_step_end
                 build_step_start('git', repo_dir, 'rebase')
@@ -309,42 +321,37 @@ def rebase_and_push(
             if is_enabled():
                 build_step_end('git', repo_dir, 'rebase')
             # Create an automatic rebase marker if not squashing
+            colors.info(f">>> git commit --allow-empty -m 'rebase'")
             repo.git.commit("--allow-empty", "-m", "rebase")
     except Exception as e:
         colors.error(f"\nERROR: Rebase failed for {repo.working_dir}")
         colors.error(f"Target: {branch_name}")
         colors.error(f"Details: {e}")
         try:
-            print("Attempting to abort rebase...")
+            colors.info(">>> git rebase --abort")
             repo.git.rebase("--abort")
         except:
             pass
         raise
 
-    colors.info(
-        f"Force-pushing rebased/squashed branch to {remote_name} (pruning history)..."
-    )
-
-    print(
-        f"Force-pushing rebased/squashed branch to {remote_name} (pruning history)..."
-    )
     try:
         current_branch_name = repo.active_branch.name
     except (TypeError, ValueError):
         current_branch_name = default_branch
 
     refspec = f"refs/heads/{current_branch_name}:refs/heads/{current_branch_name}"
+    colors.info(f">>> git push --force {remote_name} {refspec}")
     repo.remotes[remote_name].push(refspec, force=True, progress=TqdmProgress())
 
 
 def save_and_push(
     repo: Repo, branch_name: str, tag: str, remote_name: str = remote_una_name
 ):
-    colors.info(f"Staging all changes in {repo.working_dir}...")
+    colors.info(f">>> git add -A  (in {repo.working_dir})")
     repo.git.add(A=True)
 
     try:
-        colors.info(f"Committing with message: {tag}")
+        colors.info(f">>> git commit -m '{tag}'")
         repo.git.commit("-m", tag)
     except Exception as e:
         colors.warn(f"Nothing to commit or commit failed: {e}")
@@ -353,11 +360,11 @@ def save_and_push(
     rebase_and_push(repo, branch_name, remote_name=remote_name, squash=True)
 
     # Create and push tag on the final result
-    colors.info(f"Creating tag: {tag}")
+    colors.info(f">>> git tag -f {tag}")
     repo.create_tag(tag, force=True)
 
-    colors.info(f"Pushing tag '{tag}' to {remote_name}...")
-    repo.remotes[remote_name].push(f"refs/tags/{tag}:refs/tags/{tag}", force=True)
+    colors.info(f">>> git push --force {remote_name} refs/tags/{tag}:refs/tags/{tag}")
+    repo.remotes[remote_name].push(f"refs/tags/{tag}:refs/tags/{tag}", force=True, progress=TqdmProgress())
 
 
 def get_all_arches() -> list:

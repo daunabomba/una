@@ -968,6 +968,7 @@ def main():
         original_stdout_fd = os.dup(1)
         original_stderr_fd = os.dup(2)
         try:
+            colors.info(f">>> Syncing repo: {cfg['name']} (output -> {git_log_file})")
             with open(git_log_file, "w") as f:
                 os.dup2(f.fileno(), 1)
                 os.dup2(f.fileno(), 2)
@@ -1334,6 +1335,7 @@ def main():
                 git_logs_dir = bld_base / "git_logs"
                 git_logs_dir.mkdir(parents=True, exist_ok=True)
                 git_log_file = git_logs_dir / f"{r['name']}_git_pre.txt"
+                colors.info(f">>> git clean -qfdx  (in {r_path}, output -> {git_log_file})")
                 original_stdout_fd = os.dup(1)
                 original_stderr_fd = os.dup(2)
                 try:
@@ -1342,6 +1344,7 @@ def main():
                         os.dup2(f.fileno(), 2)
                         subprocess.run(["git", "clean", "-qfdx"], cwd=r_path, check=True)
                         if (r_path / ".gitmodules").exists():
+                            colors.info(f">>> git submodule foreach --recursive git clean -qfdx  (in {r_path})")
                             try:
                                 subprocess.run(
                                     [
@@ -1470,6 +1473,7 @@ def main():
                 if is_enabled():
                     from mods.trace import repo_cleaned
                     repo_cleaned(Path(r_path))
+                print(f">>> git clean -fdx -q  (in {r_path})")
                 subprocess.run(["git", "clean", "-fdx", "-q"], cwd=r_path, check=True)
                 cleaned_dirs.add(r_path)
 
@@ -1491,6 +1495,7 @@ def main():
         if is_repo_dirty(BASE_DIR):
             print("ERROR: Top-level repository is dirty. Stopping global cleanup.")
             sys.exit(1)
+        print(f">>> git clean -xfd -e bld/ -e repo/ -q  (in {BASE_DIR})")
         subprocess.run(
             ["git", "clean", "-xfd", "-e", "bld/", "-e", "repo/", "-q"], cwd=BASE_DIR
         )
