@@ -773,9 +773,13 @@ def main():
     )
     parser.add_argument(
         "--rebase",
-        nargs="?",
-        const="ALL",
-        help="Rebase the local branch onto the upstream branch (with squash) and push to una. Optional: specify a single repo name.",
+        nargs=2,
+        metavar=("component", "new_tag"),
+        help=(
+            "Rebase a component's patches onto a new upstream tag. "
+            "Finds the fork-point from the current tag, rebases onto new_tag, "
+            "updates the tag in the .repo file, then shows a diff stat."
+        ),
     )
 
     parser.add_argument(
@@ -1407,17 +1411,20 @@ def main():
             sys.exit(1)
 
     tag = args.save
-    if tag or args.rebase:
-        action = "save" if tag else "rebase"
-        if tag or args.rebase == "ALL" or args.rebase == "una":
-            handle_top_level_repo(BASE_DIR, action, tag, squash=True)
+    if tag:
+        action = "save"
+        handle_top_level_repo(BASE_DIR, action, tag, squash=True)
+        handle_repos(repos_to_process, action, tag, include_all=False)
 
-        repos_for_op = [
-            r
-            for r in repos_to_process
-            if tag or args.rebase == "ALL" or args.rebase == r["name"]
-        ]
-        handle_repos(repos_for_op, action, tag, include_all=False)
+    if args.rebase:
+        comp_name, new_tag = args.rebase
+        from mods.git_ops import rebase_to_tag
+        rebase_to_tag(
+            comp_name=comp_name,
+            new_tag=new_tag,
+            repos_config=repos_config,
+            base_dir=BASE_DIR,
+        )
 
     if args.checkout:
         handle_top_level_repo(BASE_DIR, "checkout", args.checkout, squash=True)
