@@ -834,6 +834,10 @@ def main():
 
     args = parser.parse_args()
 
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit(0)
+
     if args.trace:
         init_trace(args.trace)
 
@@ -891,9 +895,6 @@ def main():
     if args.create_disk:
         create_test_disk(test_disk)
 
-    if len(sys.argv) == 1:
-        parser.print_help()
-        sys.exit(0)
 
     repos_config = []
     global_cfg = {}
@@ -1060,9 +1061,6 @@ def main():
         list_repos(repos, target_type)
         return
 
-    if args.status:
-        print_top_level_status(BASE_DIR)
-        handle_repos(repos, "status")
 
     if args.build is not None or build_all:
         # Debug: report why curses UI will or won't be used
