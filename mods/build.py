@@ -556,6 +556,7 @@ def run_build(args):
 
         target_triple = get_target_triple(arch)
         march = get_arch_flags(arch)
+        extra_flags = "-fcf-protection=none\n" if arch in ("aarch64", "riscv64") else ""
         ld_musl = f"/usr/lib/ld-musl-{arch}.so.1"
         if arch == "x32":
             ld_musl = "/usr/lib/ld-musl-x32.so.1"
@@ -578,9 +579,9 @@ def run_build(args):
 
             # Common flags
             common_flags = (
-                f"--target={target_triple}\n--sysroot={staging_dir}\n-fPIE\n{march}\n"
+                f"--target={target_triple}\n--sysroot={staging_dir}\n-fPIE\n{march}\n{extra_flags}"
             )
-            
+
             builtins_link = f"-L{staging_dir}/usr/lib/linux\n-lclang_rt.builtins-{arch}-bmf\n"
 
             # Pure C Config

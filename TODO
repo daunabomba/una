@@ -1,0 +1,1 @@
+0. Add an march override in conf files and merge march flags with -mx32 and -m64 etc
