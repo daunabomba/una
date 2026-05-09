@@ -580,20 +580,23 @@ def run_build(args):
             common_flags = (
                 f"--target={target_triple}\n--sysroot={staging_dir}\n-fPIE\n{march}\n"
             )
+            
+            llvm_arch = target_triple.split('-')[0]
+            builtins_link = f"-L{staging_dir}/usr/lib/linux\n-lclang_rt.builtins-{llvm_arch}-bmf\n"
 
             # Pure C Config
             musl_cfg.write_text(
-                f"{common_flags}-isystem {staging_dir}/usr/include\n-fuse-ld={lld_path}\n-nostdlib\n-L{staging_dir}/usr/lib\n-lc\n-Wl,-dynamic-linker,{ld_musl}\n"
+                f"{common_flags}-isystem {staging_dir}/usr/include\n-fuse-ld={lld_path}\n-nostdlib\n-L{staging_dir}/usr/lib\n-lc\n{builtins_link}-Wl,-dynamic-linker,{ld_musl}\n"
             )
 
             # C++ Config
             musl_cxx_cfg.write_text(
-                f"{common_flags}-isystem {staging_dir}/usr/include/c++/v1\n-isystem {staging_dir}/usr/include\n--ld-path={lld_path}\n-nostdlib\n{lib_p}/Scrt1.o\n{lib_p}/crti.o\n-L{lib_p}\n-lc++\n-lc++abi\n-lunwind\n-lc\n{lib_p}/crtn.o\n-Wl,-dynamic-linker,{ld_musl}\n"
+                f"{common_flags}-isystem {staging_dir}/usr/include/c++/v1\n-isystem {staging_dir}/usr/include\n--ld-path={lld_path}\n-nostdlib\n{lib_p}/Scrt1.o\n{lib_p}/crti.o\n-L{lib_p}\n-lc++\n-lc++abi\n-lunwind\n-lc\n{builtins_link}{lib_p}/crtn.o\n-Wl,-dynamic-linker,{ld_musl}\n"
             )
 
             # Static Config
             musl_static_cfg.write_text(
-                f"{common_flags}-isystem {staging_dir}/usr/include\n-fuse-ld={lld_path}\n-nostdlib\n{lib_p}/Scrt1.o\n{lib_p}/crti.o\n-L{lib_p}\n-lc\n{lib_p}/crtn.o\n-Wl,-dynamic-linker,{ld_musl}\n"
+                f"{common_flags}-isystem {staging_dir}/usr/include\n-fuse-ld={lld_path}\n-nostdlib\n{lib_p}/Scrt1.o\n{lib_p}/crti.o\n-L{lib_p}\n-lc\n{builtins_link}{lib_p}/crtn.o\n-Wl,-dynamic-linker,{ld_musl}\n"
             )
 
         cpu_flags = global_cfg.get("cpu_flags", "")

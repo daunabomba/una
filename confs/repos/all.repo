@@ -1,0 +1,3 @@
+[all]
+depends = build-tools busybox dropbear libmnl libnftnl linux-headers linux-image llvm-compiler-rt llvm-runtime llvm-tools musl mxmux nftables nsd openssl wireguard-tools
+type = virtual
