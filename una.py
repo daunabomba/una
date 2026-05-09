@@ -838,10 +838,13 @@ def main():
         init_trace(args.trace)
 
     if not args.conf:
-        colors.error("Error: --conf is required.")
-        sys.exit(1)
+        if args.status:
+            pass # --status can run without a conf file
+        else:
+            colors.error("Error: --conf is required.")
+            sys.exit(1)
 
-    conf_files = [c.strip() for c in args.conf.split(",") if c.strip()]
+    conf_files = [c.strip() for c in args.conf.split(",")] if args.conf else []
 
     if args.run and len(conf_files) > 1:
         colors.error("Error: --run requires exactly one configuration file.")
@@ -863,6 +866,22 @@ def main():
         if conflicting:
             colors.error(f"Error: --run cannot be combined with {', '.join(conflicting)}.")
             sys.exit(1)
+
+    if args.status:
+        from mods.git_ops import print_top_level_status, handle_repos
+        print_top_level_status(BASE_DIR)
+        
+        repos = []
+        repo_base = BASE_DIR / "repo"
+        if repo_base.exists():
+            # Find all directories containing a .git folder or file
+            for git_path in repo_base.rglob(".git"):
+                repo_path = git_path.parent
+                repos.append({"name": repo_path.name, "repo_dir": str(repo_path)})
+        
+        repos.sort(key=lambda r: r["name"])
+        handle_repos(repos, "status")
+        sys.exit(0)
 
     conf_name = Path(conf_files[0]).stem
     bld_base = BASE_DIR / "bld" / conf_name
