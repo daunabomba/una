@@ -557,6 +557,8 @@ def run_build(args):
         target_triple = get_target_triple(arch)
         march = get_arch_flags(arch)
         extra_flags = "-fcf-protection=none\n" if arch in ("aarch64", "riscv64") else ""
+        if arch == "aarch64":
+            extra_flags += " -fno-sme"
         ld_musl = f"/usr/lib/ld-musl-{arch}.so.1"
         if arch == "x32":
             ld_musl = "/usr/lib/ld-musl-x32.so.1"
