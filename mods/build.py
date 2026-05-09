@@ -581,8 +581,7 @@ def run_build(args):
                 f"--target={target_triple}\n--sysroot={staging_dir}\n-fPIE\n{march}\n"
             )
             
-            llvm_arch = target_triple.split('-')[0]
-            builtins_link = f"-L{staging_dir}/usr/lib/linux\n-lclang_rt.builtins-{llvm_arch}-bmf\n"
+            builtins_link = f"-L{staging_dir}/usr/lib/linux\n-lclang_rt.builtins-{arch}-bmf\n"
 
             # Pure C Config
             musl_cfg.write_text(
@@ -642,6 +641,12 @@ def run_build(args):
 
             colors.info(f"[{arch}] DEBUG: Building repo '{r['name']}'")
             colors.info(f"[{arch}] DEBUG: Repo path: {r['repo_dir']}")
+            
+            # Explicitly remove build directories to ensure a fresh cmake/build
+            r_path = Path(r["repo_dir"]).absolute()
+            shutil.rmtree(r_path / f"build-{arch}", ignore_errors=True)
+            shutil.rmtree(r_path / f"build-{r['name']}-{arch}", ignore_errors=True)
+
             una_file = r.get("una_file", "una.py")
             colors.info(f"[{arch}] DEBUG: Loading module '{una_file}'")
             module = load_repo_una(r["repo_dir"], una_file)
