@@ -1,0 +1,5 @@
+[llvm-compiler-rt]
+ref = llvm-tools
+una_file = una/compiler-rt.py
+type = target
+depends = llvm-tools
