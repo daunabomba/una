@@ -842,7 +842,7 @@ def main():
         init_trace(args.trace)
 
     if not args.conf:
-        if args.status:
+        if args.status or args.create_disk:
             pass # --status can run without a conf file
         else:
             colors.error("Error: --conf is required.")
@@ -863,6 +863,7 @@ def main():
             ('--save', args.save),
             ('--checkout', args.checkout),
             ('--clean', args.clean),
+            ('--create-disk', args.create_disk),
             ('--report', args.report),
         ]
         
@@ -887,15 +888,14 @@ def main():
         handle_repos(repos, "status")
         sys.exit(0)
 
+    test_disk = BASE_DIR / "bld" / "test.img"
+    if args.create_disk:
+        create_test_disk(test_disk)
+        sys.exit(0)
+
     conf_name = Path(conf_files[0]).stem
     bld_base = BASE_DIR / "bld" / conf_name
     tools_install_dir = BASE_DIR / "bld" / "tools"
-    test_disk = bld_base / "test.img"
-
-    if args.create_disk:
-        create_test_disk(test_disk)
-
-
     repos_config = []
     global_cfg = {}
 
