@@ -124,7 +124,7 @@ class StepRunner:
         self.component_snapshots = {}  # name -> {staging: {}, target: {}}
         self.cleaned_components = set()
         # Create build_logs directory at tools level
-        self.build_logs_dir = self.bld_base / "tools" / "build_logs"
+        self.build_logs_dir = self.bld_base / "build_logs"
         self.build_logs_dir.mkdir(parents=True, exist_ok=True)
 
     def run_step(self, cfg, step_name, step_func, **kwargs):
@@ -134,7 +134,7 @@ class StepRunner:
             build_step_start(self.arch, name, step_name)
         # 1. Cleanup and Pre-snapshot on first call for this component
         if name not in self.cleaned_components:
-            report_file = self.bld_base / self.arch / "report" / f"{name}.txt"
+            report_file = self.bld_base / "report" / f"{name}.txt"
             if report_file.exists():
                 colors.info(
                     f"[{self.arch}] Cleaning up previous build outputs for {name}..."
@@ -728,8 +728,8 @@ def remove_repo(name, repos, arches, bld_base):
         if report_file.exists():
             colors.info(f"[{arch}] Cleaning build outputs for {name}...")
             paths = get_report_paths(report_file)
-            staging_dir = bld_base / arch / "staging"
-            target_dir = bld_base / arch / "target"
+            staging_dir = bld_base / "staging"
+            target_dir = bld_base / "target"
 
             for p in paths:
                 try:
@@ -1088,7 +1088,7 @@ def main():
 
                 # Determine log_dir
                 conf_name = Path(conf_files[0]).stem
-                log_dir = str(BASE_DIR / "bld" / conf_name / "tools" / "build_logs")
+                log_dir = str(BASE_DIR / "bld" / conf_name / "build_logs")
 
                 # Debug: indicate starting curses UI and the log_dir
                 try:

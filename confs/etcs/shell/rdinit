@@ -1,8 +1,9 @@
-#!/usr/bin/sh -x
+#!/usr/bin/sh
 PATH=/usr/sbin:/usr/bin
 
 HUGE_PAGES=",huge=within_size"
 SERIAL_CONSOLE_DEV="ttyS0"
+
 case "$(uname -m)" in
     aarch64)
         SERIAL_CONSOLE_DEV=ttyAMA0
@@ -38,5 +39,5 @@ ln -sf ../proc/self/fd/0 new_root/dev/stdin
 ln -sf ../proc/self/fd/1 new_root/dev/stdout
 ln -sf ../proc/self/fd/2 new_root/dev/stderr
 ln -sf usr/sbin/init /init
-exec switch_root -c /dev/console new_root /bin/sh
+
 exec switch_root -c /dev/console new_root /usr/sbin/init
