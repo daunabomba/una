@@ -601,7 +601,6 @@ def create_test_disk(disk_path):
         return
 
     print(f"Creating 1G test disk at {disk_path}...")
-    import subprocess
 
     # 1. Create 1G raw image
     subprocess.run(
@@ -686,7 +685,6 @@ def create_test_disk(disk_path):
 
 def propagate_skel(staging_dir, target_dir):
     """Skel propagation using original file-by-file method + snapshot verification"""
-    import subprocess
 
     colors.info("Propagating skeleton (original method)...")
 
@@ -847,6 +845,19 @@ def main():
         else:
             colors.error("Error: --conf is required.")
             sys.exit(1)
+
+    base = BASE_DIR / "bld"
+    tmp = base / "tmp"
+    tmp.mkdir(parents=True, exist_ok=True)
+
+    keep_list = {"PATH", "LANG"}
+
+    global_env = {k: os.environ[k] for k in keep_list if k in os.environ}
+    global_env["HOME"] = str(base)
+    global_env["TMPDIR"] = str(tmp)
+
+    os.environ.clear()
+    os.environ.update(global_env)
 
     conf_files = [c.strip() for c in args.conf.split(",")] if args.conf else []
 
@@ -1152,7 +1163,6 @@ def main():
                     pass
                 # Reset terminal to fix any remaining issues
                 try:
-                    import subprocess
                     subprocess.run(['stty', 'sane'], check=False)
                 except:
                     pass
@@ -1252,7 +1262,6 @@ def main():
 
     if args.clean:
         print("\n=== Global Cleanup ===")
-        import subprocess
 
         # 1. Clean build directory (staging and target, but keep reports?)
         # User said "removes all files produced by the build".
@@ -1328,7 +1337,6 @@ def main():
 
     if args.report:
         from git import Repo
-        import subprocess
 
         print("\n=== Generating Change Report ===")
         report_dir = bld_base / "report"

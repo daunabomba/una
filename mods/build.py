@@ -97,26 +97,32 @@ class SubprocessRunner:
             CompletedProcess: Result from subprocess.run.
         """
         from mods import colors
+        import shlex
         
         # Format command for display
         if isinstance(cmd, list):
-            cmd_display = " ".join(str(c) for c in cmd)
+            cmd_display = " ".join(shlex.quote(str(c)) for c in cmd)
         else:
             cmd_display = cmd
-        
+
+        # Format command for env
+        if env:
+            env_display = " ".join(f"{k}={shlex.quote(str(v))}" for k, v in env.items())
+        else:
+            env_display = ""
         # Log to trace file if provided and exists
         if self.trace_file:
-            self._log_to_trace(cmd, cwd, env, cmd_display)
+            self._log_to_trace(cwd, env_display, cmd_display)
         
         # Display execution info
-        colors.info(f"Executing: {cmd_display}")
         if cwd:
-            colors.info(f"  in: {cwd}")
+            colors.info(f"Executing in: {cwd}")
+        colors.info(f"{env_display} {cmd_display}")
         
         # Execute subprocess
         return subprocess.run(cmd, cwd=cwd, env=env, check=check, shell=shell, **kwargs)
     
-    def _log_to_trace(self, cmd, cwd, env, cmd_display):
+    def _log_to_trace(self, cmd, env_display, cmd_display):
         """Log command details to trace file."""
         try:
             with open(self.trace_file, "a") as f:
@@ -128,8 +134,7 @@ class SubprocessRunner:
                 
                 if env:
                     f.write("Environment:\n")
-                    for key in sorted(env.keys()):
-                        f.write(f"  {key}={env[key]}\n")
+                    f.write(f"{env_display}\n")
                 
                 f.write("=" * 80 + "\n")
                 f.flush()
