@@ -850,7 +850,7 @@ def main():
     tmp = base / "tmp"
     tmp.mkdir(parents=True, exist_ok=True)
 
-    keep_list = {"PATH", "LANG"}
+    keep_list = {"PATH"}
 
     global_env = {k: os.environ[k] for k in keep_list if k in os.environ}
     global_env["HOME"] = str(base)
