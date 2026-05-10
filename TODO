@@ -1,2 +1,3 @@
-0. Add an march override in conf files and merge march flags with -mx32 and -m64 etc
-1. Move build logs for non-tools outside tools and into conf area. ie all_x32/tools/build_logs/busybox.txt moved to all_x32/build_logs/busybox.txt 
+Add an march override in conf files and merge march flags with -mx32 and -m64 etc
+Move build logs for non-tools outside tools and into conf area. ie all_x32/tools/build_logs/busybox.txt moved to all_x32/build_logs/busybox.txt 
+Uniform tools and path

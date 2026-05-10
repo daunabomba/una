@@ -51,6 +51,26 @@ repos_to_sync_set = None
 una_base_str = None
 
 
+def get_build_env(staging_dir=None):
+    """Get environment for build subprocesses with tools/bin in PATH.
+    
+    Args:
+        staging_dir: Optional Path to staging directory for PKG_CONFIG_PATH.
+                    Used by packages that depend on libs in staging.
+    
+    Returns:
+        dict: Environment with tools/bin added to PATH and optional PKG_CONFIG_PATH.
+    """
+    env = os.environ.copy()
+    tools_bin = Path.cwd() / "bld" / "tools" / "bin"
+    env["PATH"] = f"{tools_bin}:{env.get('PATH', '')}"
+    
+    if staging_dir:
+        env["PKG_CONFIG_PATH"] = f"{staging_dir}/usr/lib/pkgconfig"
+    
+    return env
+
+
 def strip_ansi_codes(text):
     """Remove ANSI escape sequences from text."""
     ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')

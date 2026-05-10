@@ -54,7 +54,7 @@ QEMU_COMMANDS = {
         "-M",
         "virt",
         "-cpu",
-        "cortex-a53",
+        "cortex-a57",
         "-m",
         "1G",
         "-serial",
