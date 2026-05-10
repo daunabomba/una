@@ -1,5 +1,5 @@
 [llvm-runtime]
 ref = llvm-tools
-una_file = una/runtime.py
+una_file = una/runtimes.py
 type = target
 depends = musl
