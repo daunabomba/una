@@ -71,6 +71,72 @@ def get_build_env(staging_dir=None):
     return env
 
 
+class SubprocessRunner:
+    """Wrapper for subprocess.run with trace logging and execution info output."""
+    
+    def __init__(self, trace_file=None):
+        """Initialize runner with optional trace file.
+        
+        Args:
+            trace_file: Optional Path to trace file for logging commands.
+        """
+        self.trace_file = trace_file
+    
+    def run(self, cmd, cwd=None, env=None, check=True, shell=False, **kwargs):
+        """Execute command with logging and trace support.
+        
+        Args:
+            cmd: Command and arguments as list or string (if shell=True).
+            cwd: Working directory for subprocess.
+            env: Environment variables dict.
+            check: Raise CalledProcessError if returncode != 0.
+            shell: Execute command through shell.
+            **kwargs: Additional arguments passed to subprocess.run.
+        
+        Returns:
+            CompletedProcess: Result from subprocess.run.
+        """
+        from mods import colors
+        
+        # Format command for display
+        if isinstance(cmd, list):
+            cmd_display = " ".join(str(c) for c in cmd)
+        else:
+            cmd_display = cmd
+        
+        # Log to trace file if provided and exists
+        if self.trace_file:
+            self._log_to_trace(cmd, cwd, env, cmd_display)
+        
+        # Display execution info
+        colors.info(f"Executing: {cmd_display}")
+        if cwd:
+            colors.info(f"  in: {cwd}")
+        
+        # Execute subprocess
+        return subprocess.run(cmd, cwd=cwd, env=env, check=check, shell=shell, **kwargs)
+    
+    def _log_to_trace(self, cmd, cwd, env, cmd_display):
+        """Log command details to trace file."""
+        try:
+            with open(self.trace_file, "a") as f:
+                f.write("=" * 80 + "\n")
+                f.write(f"Command: {cmd_display}\n")
+                
+                if cwd:
+                    f.write(f"WorkDir: {cwd}\n")
+                
+                if env:
+                    f.write("Environment:\n")
+                    for key in sorted(env.keys()):
+                        f.write(f"  {key}={env[key]}\n")
+                
+                f.write("=" * 80 + "\n")
+                f.flush()
+        except Exception as e:
+            colors.warn(f"Failed to write to trace file {self.trace_file}: {e}")
+
+
 def strip_ansi_codes(text):
     """Remove ANSI escape sequences from text."""
     ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')

@@ -1,17 +1,21 @@
-#!/usr/bin/sh
+#!/usr/bin/sh -x
 PATH=/usr/sbin:/usr/bin
 
 HUGE_PAGES=",huge=within_size"
-
+SERIAL_CONSOLE_DEV="ttyS0"
 case "$(uname -m)" in
+    aarch64)
+        SERIAL_CONSOLE_DEV=ttyAMA0
+        ;;
     riscv64)
         HUGE_PAGES=
         ;;
 esac
 
 mkdir new_root
-mount -n -t tmpfs -o size=64M,nodev,nosuid,noatime,nodiratime${HUGE_PAGES} rootfs new_root
+mount -n -t tmpfs -o size=64M,nodev,nosuid,noatime,nodiratime,rw"${HUGE_PAGES}" rootfs new_root
 cp -a $(find / -maxdepth 1 \( -type d -o -type l \) ! -name / ! -name new_root -print) new_root
+sed -e s:@SERIAL_CONSOLE_DEVICE@:${SERIAL_CONSOLE_DEV}: -i new_root/etc/inittab
 rm -f new_root/dev/console
 
 mkdir new_root/boot
@@ -34,4 +38,5 @@ ln -sf ../proc/self/fd/0 new_root/dev/stdin
 ln -sf ../proc/self/fd/1 new_root/dev/stdout
 ln -sf ../proc/self/fd/2 new_root/dev/stderr
 ln -sf usr/sbin/init /init
+exec switch_root -c /dev/console new_root /bin/sh
 exec switch_root -c /dev/console new_root /usr/sbin/init
