@@ -568,9 +568,8 @@ def run_build(args):
     ]
     for arch in arches:
         colors.info(f"\n====== Target Stage: {arch} ======")
-        arch_bld_dir = bld_base / arch
-        staging_dir = arch_bld_dir / "staging"
-        target_dir = arch_bld_dir / "target"
+        staging_dir = bld_base / "staging"
+        target_dir = bld_base / "target"
         runner = StepRunner(arch, staging_dir, target_dir, bld_base, use_curses, curses_ui)
 
         # Ensure build directories exist and skel is propagated
@@ -649,9 +648,9 @@ def run_build(args):
         elif arch == "x86_64":
             ld_musl = "/usr/lib/ld-musl-x86_64.so.1"
 
-        musl_cfg = arch_bld_dir / "musl.cfg"
-        musl_cxx_cfg = arch_bld_dir / "musl_cxx.cfg"
-        musl_static_cfg = arch_bld_dir / "musl_static.cfg"
+        musl_cfg = bld_base / "musl.cfg"
+        musl_cxx_cfg = bld_base / "musl_cxx.cfg"
+        musl_static_cfg = bld_base / "musl_static.cfg"
 
         if (
             not musl_cfg.exists()
@@ -659,7 +658,6 @@ def run_build(args):
             or not musl_static_cfg.exists()
         ):
             colors.info(f"[{arch}] Generating compiler configurations...")
-            arch_bld_dir.mkdir(parents=True, exist_ok=True)
             lld_path = tools_install_dir / "bin" / "ld.lld"
             lib_p = staging_dir / "usr" / "lib"
 

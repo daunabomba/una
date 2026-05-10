@@ -507,7 +507,7 @@ class StepRunner:
         combined_del = {f"staging/{k}": v for k, v in del_s.items()}
         combined_del.update({f"target/{k}": v for k, v in del_t.items()})
 
-        report_file = self.bld_base / self.arch / "report" / f"{name}.txt"
+        report_file = self.bld_base / "build_product" / f"{name}.txt"
         write_report(combined_added, combined_mod, combined_del, report_file)
 
         if is_enabled():
@@ -1259,9 +1259,8 @@ def main():
         # Reports are also produced by the build but useful for next build cleanup.
         # Let's keep 'report' directory but clean staging/target.
         for arch in arches:
-            arch_bld_dir = bld_base / arch
-            staging_dir = arch_bld_dir / "staging"
-            target_dir = arch_bld_dir / "target"
+            staging_dir = bld_base / "staging"
+            target_dir = bld_base / "target"
 
             if staging_dir.exists():
                 print(f"Cleaning {staging_dir}...")
