@@ -2,7 +2,7 @@
 una_repo = linux.git
 repo_dir = repo/kernel
 una_file = una/headers.py
-origin_url = /mnt/work/bld/linux-stable.git
+origin_url = linux-stable.git
 depends = build-tools
 type = target
 tag = v7.0.8

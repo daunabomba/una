@@ -1,7 +1,7 @@
 [libmnl]
 una_repo = libmnl.git
 repo_dir = repo/libmnl
-origin_url = /mnt/work/bld/libmnl.git
+origin_url = libmnl.git
 depends = musl
 tag = libmnl-1.0.5
 type = target

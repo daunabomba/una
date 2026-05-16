@@ -1,7 +1,7 @@
 [nftables]
 una_repo = nftables.git
 repo_dir = repo/nftables
-origin_url = /mnt/work/bld/nftables.git
+origin_url = nftables.git
 depends = libnftnl
 tag = v1.1.6
 type = target

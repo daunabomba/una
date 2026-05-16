@@ -1,7 +1,7 @@
 [mxmux]
 una_repo = mxmux.git
 repo_dir = repo/mxmux
-origin_url = /mnt/work/bld/mxmux.git
+origin_url = mxmux.git
 una_file = stuff/mxmux.py
 depends = llvm-runtime
 type = target
