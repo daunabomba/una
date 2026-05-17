@@ -854,7 +854,7 @@ def main():
     tmp = base / "tmp"
     tmp.mkdir(parents=True, exist_ok=True)
 
-    keep_list = {"PATH", 'HOME', 'SSH_AUTH_SOCK'}
+    keep_list = {"PATH", 'HOME', 'SSH_AUTH_SOCK', 'TERM'}
 
     global_env = {k: os.environ[k] for k in keep_list if k in os.environ}
     global_env["TMPDIR"] = str(tmp)
