@@ -154,7 +154,7 @@ def redirect_git_output(log_file_path):
     original_stdout_fd = os.dup(1)
     original_stderr_fd = os.dup(2)
     try:
-        log_file = open(log_file_path, "w")
+        log_file = open(log_file_path, "a")
         os.dup2(log_file.fileno(), 1)
         os.dup2(log_file.fileno(), 2)
         yield

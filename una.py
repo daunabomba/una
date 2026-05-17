@@ -173,9 +173,9 @@ class StepRunner:
         old_sys_stderr = sys.stderr
 
         # Open log file
-        trace_file_open(str(log_file_path), "w")
+        trace_file_open(str(log_file_path), "a")
         try:
-            log_file = open(log_file_path, "w")
+            log_file = open(log_file_path, "a")
         except Exception as e:
             trace_exception(f"open({log_file_path})", e)
             raise
@@ -1019,7 +1019,7 @@ def main():
         original_stderr_fd = os.dup(2)
         try:
             colors.info(f">>> Syncing repo: {cfg['name']} (output -> {git_log_file})")
-            with open(git_log_file, "w") as f:
+            with open(git_log_file, "a") as f:
                 os.dup2(f.fileno(), 1)
                 os.dup2(f.fileno(), 2)
                 if sync_repo(cfg, una_base):
