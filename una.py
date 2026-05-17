@@ -572,10 +572,10 @@ def list_repos(repos, target_type=None):
     return [r["name"] for r in filtered]
 
 
-def get_git_remote_base():
+def get_git_remote_base(remote_name="una"):
     """
     Attempts to determine the base URL of the current git repository's remote.
-    Specifically looks for a remote named 'una'.
+    Specifically looks for the remote specified by remote_name.
     """
     try:
         from git import Repo
@@ -584,9 +584,9 @@ def get_git_remote_base():
         script_dir = Path(__file__).resolve().parent
         repo = Repo(script_dir, search_parent_directories=True)
 
-        # Find the remote named 'una' explicitly
+        # Find the specified remote explicitly
         for r in repo.remotes:
-            if r.name == "una":
+            if r.name == remote_name:
                 url = str(r.url)
                 if "/" in url:
                     return url.rsplit("/", 1)[0]
@@ -944,7 +944,8 @@ def main():
     for cfg in repos_config:
         cfg["is_virtual"] = cfg.get("type") == "virtual"
 
-    una_base = get_git_remote_base()
+    una_base = get_git_remote_base("una")
+    origin_base = get_git_remote_base("origin")
 
     repos = filter_repos_for_sync(repos_config)
     for r in repos:
@@ -955,6 +956,17 @@ def main():
             r["una_url"] = f"{base}{r['una_repo']}"
         else:
             r["una_url"] = "UNKNOWN_BASE"
+
+        if "origin_url" in r:
+            ourl = r["origin_url"]
+            if "/" not in ourl and ":" not in ourl:
+                if origin_base:
+                    obase = origin_base
+                    if not obase.endswith("/") and not obase.endswith(":"):
+                        obase += "/"
+                    r["origin_url"] = f"{obase}{ourl}"
+                else:
+                    r["origin_url"] = f"UNKNOWN_ORIGIN_BASE/{ourl}"
 
     build_all = False
     if args.build is not None and len(args.build) == 0:
