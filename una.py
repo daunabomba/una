@@ -454,12 +454,16 @@ class StepRunner:
                 os.close(original_stderr_fd)
             except Exception:
                 pass
-            if pipe_read:
+            if pipe_read_fd is not None:
                 try:
-                    os.close(pipe_read)
+                    os.close(pipe_read_fd)
                 except Exception:
                     pass
-
+            if pipe_write_fd is not None:
+                try:
+                    os.close(pipe_write_fd)
+                except Exception:
+                    pass
             # Ensure asynchronous writers have flushed pending writes
             if async_top_writer:
                 try:
