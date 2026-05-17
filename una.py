@@ -190,6 +190,9 @@ class StepRunner:
         pipe_read, pipe_write = None, None
         async_top_writer = None
         async_file_writer = None
+        pipe_read_fd = None
+        pipe_write_fd = None
+        tee_thread = None
 
         if use_pipe_capture:
             # Create a pipe for capturing output
@@ -368,20 +371,26 @@ class StepRunner:
             reader = threading.Thread(target=reader_thread, daemon=False)
             reader.start()
         else:
-            # When not using pipe capture, tee FD-level stdout/stderr to terminal and log file
+            # Non-curses mode: use non-blocking tee to avoid blocking
             pipe_read_fd, pipe_write_fd = os.pipe()
             os.dup2(pipe_write_fd, 1)
             os.dup2(pipe_write_fd, 2)
 
             def _tee_thread():
+                import select
+                import time
                 try:
                     while True:
-                        data = os.read(pipe_read_fd, 4096)
-                        if not data:
-                            break
-                        os.write(original_stdout_fd, data)
-                        log_file.write(data.decode(errors="replace"))
-                        log_file.flush()
+                        # Non-blocking read with timeout
+                        ready, _, _ = select.select([pipe_read_fd], [], [], 0.5)
+                        if ready:
+                            data = os.read(pipe_read_fd, 4096)
+                            if not data:
+                                break
+                            os.write(original_stdout_fd, data)
+                            log_file.write(data.decode(errors="replace"))
+                            log_file.flush()
+                        time.sleep(0.01)  # Prevent busy-waiting
                 except Exception:
                     pass
 
@@ -416,24 +425,24 @@ class StepRunner:
                     except Exception:
                         pass
             else:
-                # Close pipe_write to signal EOF to tee thread (non-pipe-capture case)
+                # Non-pipe-capture mode: close pipe and wait for tee thread
                 try:
-                    if 'pipe_write_fd' in dir() and pipe_write_fd is not None:
+                    if pipe_write_fd is not None:
                         os.close(pipe_write_fd)
                 except Exception:
                     pass
-                # Restore original file descriptors
                 try:
-                    os.dup2(original_stdout_fd, 1)
-                    os.dup2(original_stderr_fd, 2)
+                    if tee_thread is not None:
+                        tee_thread.join(timeout=2)
                 except Exception:
                     pass
-                # Wait for tee thread to finish draining remaining data
-                try:
-                    if 'tee_thread' in dir() and tee_thread is not None:
-                        tee_thread.join(timeout=5)
-                except Exception:
-                    pass
+
+            # Restore original file descriptors (always needed)
+            try:
+                os.dup2(original_stdout_fd, 1)
+                os.dup2(original_stderr_fd, 2)
+            except Exception:
+                pass
 
             # Restore Python-level stdout/stderr if we changed them
             try:
@@ -454,16 +463,18 @@ class StepRunner:
                 os.close(original_stderr_fd)
             except Exception:
                 pass
-            if pipe_read_fd is not None:
-                try:
-                    os.close(pipe_read_fd)
-                except Exception:
-                    pass
-            if pipe_write_fd is not None:
-                try:
-                    os.close(pipe_write_fd)
-                except Exception:
-                    pass
+            # Close pipe file descriptors if they were created (pipe capture mode)
+            if use_pipe_capture:
+                if pipe_read is not None:
+                    try:
+                        os.close(pipe_read)
+                    except Exception:
+                        pass
+                if pipe_write is not None:
+                    try:
+                        os.close(pipe_write)
+                    except Exception:
+                        pass
             # Ensure asynchronous writers have flushed pending writes
             if async_top_writer:
                 try:

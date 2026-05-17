@@ -118,7 +118,7 @@ class SubprocessRunner:
         if cwd:
             colors.info(f"Executing in: {cwd}")
         colors.info(f"{env_display} {cmd_display}")
-        
+
         # Execute subprocess
         return subprocess.run(cmd, cwd=cwd, env=env, check=check, shell=shell, **kwargs)
     
