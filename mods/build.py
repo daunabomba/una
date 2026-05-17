@@ -380,7 +380,7 @@ def run_build(args):
             old_sys_stderr = sys.stderr
             
             try:
-                log_file = open(log_file_path, "w")
+                log_file = open(log_file_path, "a")
                 
                 # If curses is active, use pipe capture to write to both curses UI and log file
                 if use_curses and hasattr(old_sys_stdout, 'write'):
