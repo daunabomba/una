@@ -334,7 +334,8 @@ def run_build(args):
             colors.info("Tools already built and up to date, skipping...")
     elif repos_to_process:
         target_requires_tools = any(r.get("type") != "tools" for r in repos_to_process)
-        if target_requires_tools:
+        requested_any_tool = any(r["name"] in required_names for r in all_tools_repos)
+        if target_requires_tools or requested_any_tool or has_tool_component:
             if not tools_state_file.exists():
                 colors.info("Tools not built, building...")
                 tools_to_build = all_tools_repos
