@@ -317,6 +317,14 @@ def run_build(args):
         return False
 
     all_tools_repos = [r for r in repos if r.get("type") == "tools"]
+    # Sort tools by dependency order
+    from mods.deps import get_build_order
+    try:
+        ordered_names, _ = get_build_order(all_tools_repos)
+        name_to_repo = {r["name"]: r for r in all_tools_repos}
+        all_tools_repos = [name_to_repo[name] for name in ordered_names if name in name_to_repo]
+    except Exception as e:
+        colors.warn(f"Failed to sort tools by dependency: {e}")
 
     # Also check if any component explicitly requested tools (like build-tools)
     has_tool_component = "build-tools" in required_names
