@@ -392,9 +392,10 @@ def run_build(args):
                     
                     # Create async writer to handle both log file and curses UI
                     class AsyncLogWriter:
-                        def __init__(self, writer_obj, logfile):
-                            self.writer = writer_obj
+                        def __init__(self, logfile, write_to_top=True, top_queue=None):
                             self.logfile = logfile
+                            self.write_to_top = bool(write_to_top)
+                            self.top_queue = top_queue
                             self.q = queue.Queue()
                             self.thread = threading.Thread(target=self._run, daemon=True)
                             self.thread.start()
@@ -417,20 +418,18 @@ def run_build(args):
                                         self.logfile.write(clean_text)
                                         try:
                                             self.logfile.flush()
-                                            os.fsync(self.logfile.fileno())
+                                            try:
+                                                os.fsync(self.logfile.fileno())
+                                            except Exception:
+                                                pass
                                         except Exception:
                                             pass
                                 except Exception:
                                     pass
-                                # Write to curses UI (keep formatting)
-                                if self.writer is not None:
+                                # Enqueue top text for UI thread; avoid calling curses from this background thread
+                                if self.write_to_top and self.top_queue is not None:
                                     try:
-                                        if hasattr(self.writer, 'write'):
-                                            self.writer.write(text)
-                                            try:
-                                                self.writer.flush()
-                                            except Exception:
-                                                pass
+                                        self.top_queue.put(text)
                                     except Exception:
                                         pass
                                 try:
@@ -455,7 +454,7 @@ def run_build(args):
                             except Exception:
                                 pass
                     
-                    async_writer = AsyncLogWriter(old_sys_stdout, log_file)
+                    async_writer = AsyncLogWriter(log_file, write_to_top=True, top_queue=(curses_ui.top_queue if curses_ui else None))
                     
                     # Rebind sys.stdout/stderr to StdoutReplacer that queues writes
                     class StdoutReplacer:
@@ -505,7 +504,7 @@ def run_build(args):
                     # Close pipe to signal end
                     os.close(pipe_write)
                     reader.join(timeout=2)
-                    async_writer.q.put(None)
+                    async_writer.put(None)
                 else:
                     # Non-curses mode: tee output to terminal and log file
                     pipe_read, pipe_write = os.pipe()

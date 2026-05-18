@@ -230,6 +230,7 @@ class CursesUI:
         self.build_args = None
         self.build_result = None
         self.current_log_queue = queue.Queue()  # For tracking which log file is currently being built
+        self.top_queue = queue.Queue()  # Queue for UI-thread delivery of stdout/stderr text
 
     def start(self, build_func, *args, **kwargs):
         """Start curses UI and run build_func in background. Returns build result."""
@@ -326,6 +327,7 @@ class CursesUI:
         self.old_stderr = sys.stderr
 
         writer = Writer(self.top, self.lock)
+        self.writer = writer
         sys.stdout = writer
         sys.stderr = writer
 
@@ -349,13 +351,39 @@ class CursesUI:
         try:
             if self.build_thread:
                 while self.build_thread.is_alive():
+                    # Drain any pending top-pane output from background writers in UI thread
+                    try:
+                        while True:
+                            item = self.top_queue.get_nowait()
+                            try:
+                                if hasattr(self, "writer") and item is not None:
+                                    self.writer.write(item)
+                                    try:
+                                        self.writer.flush()
+                                    except Exception:
+                                        pass
+                            except Exception:
+                                pass
+                    except queue.Empty:
+                        pass
                     ch = stdscr.getch()
                     if ch == ord("q"):
                         break
-                    time.sleep(0.1)
+                    time.sleep(0.05)
         except Exception:
             pass
         finally:
+            # Drain remaining top_queue items before closing
+            try:
+                while True:
+                    item = self.top_queue.get_nowait()
+                    try:
+                        if hasattr(self, "writer") and item is not None:
+                            self.writer.write(item)
+                    except Exception:
+                        pass
+            except queue.Empty:
+                pass
             self.close()
 
     def set_current_log(self, log_path):

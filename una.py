@@ -209,10 +209,10 @@ class StepRunner:
 
                 # Background asynchronous writer to avoid blocking the main thread
                 class AsyncLogWriter:
-                    def __init__(self, writer_obj, logfile, write_to_top=True):
-                        self.writer = writer_obj
+                    def __init__(self, logfile, write_to_top=True, top_queue=None):
                         self.logfile = logfile
                         self.write_to_top = bool(write_to_top)
+                        self.top_queue = top_queue
                         self.q = queue.Queue()
                         self.thread = threading.Thread(target=self._run, daemon=True)
                         self.thread.start()
@@ -225,7 +225,7 @@ class StepRunner:
                             if item is None:
                                 break
                             text = item
-                            # Strip \r characters before writing (handles both log file and curses Writer)
+                            # Strip \r characters before writing (handles log file)
                             if isinstance(text, str):
                                 text = text.replace('\r', '')
                             try:
@@ -244,18 +244,11 @@ class StepRunner:
                                         pass
                             except Exception:
                                 pass
-                            # Optionally write to top writer (curses Writer)
-                            if self.write_to_top and self.writer is not None:
+                            # Enqueue top text for UI thread to consume; do NOT call curses from this thread.
+                            if self.write_to_top and self.top_queue is not None:
                                 try:
-                                    if hasattr(self.writer, 'write'):
-                                        self.writer.write(text)
-                                        try:
-                                            self.writer.flush()
-                                        except Exception:
-                                            pass
+                                    self.top_queue.put(text)
                                 except Exception:
-                                    # If writing to the curses writer fails, skip writing to terminal
-                                    # to avoid emitting raw escape sequences outside curses.
                                     pass
                             try:
                                 self.q.task_done()
@@ -284,10 +277,10 @@ class StepRunner:
                         except Exception:
                             pass
 
-                # Writer for top pane (Python prints only)
-                async_top_writer = AsyncLogWriter(old_sys_stdout, log_file, write_to_top=True)
+                # Writer for top pane (Python prints only) - top_queue is consumed by the curses UI thread
+                async_top_writer = AsyncLogWriter(log_file, write_to_top=True, top_queue=(self.curses_ui.top_queue if self.curses_ui else None))
                 # Writer for subprocess output -> log file only (no curses display)
-                async_file_writer = AsyncLogWriter(None, log_file, write_to_top=False)
+                async_file_writer = AsyncLogWriter(log_file, write_to_top=False, top_queue=None)
 
                 class StdoutReplacer:
                     def __init__(self, aw):
