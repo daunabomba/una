@@ -12,6 +12,20 @@ import re
 import queue
 from pathlib import Path
 
+# For wrapping and width calculations
+try:
+    from wcwidth import wcwidth
+    HAVE_WCWIDTH = True
+except Exception:
+    HAVE_WCWIDTH = False
+
+# Try to import optional helper if present
+try:
+    from bld.wrap_utils import wrap_ansi, visible_width, split_ansi
+    HAVE_WRAP_UTILS = True
+except Exception:
+    HAVE_WRAP_UTILS = False
+
 # Regex to remove CSI and other ANSI control sequences for bottom pane
 CSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 # Matches ESC followed by '(' or ')' sequences like ESC ( B
@@ -221,7 +235,8 @@ class CursesUI:
         self.h = 0
         self.w = 0
         self.running = False
-        self.lock = threading.Lock()
+        self.top_lock = threading.Lock()
+        self.bottom_lock = threading.Lock()
         self.old_stdout = None
         self.old_stderr = None
         self.log_thread = None
@@ -231,6 +246,7 @@ class CursesUI:
         self.build_result = None
         self.current_log_queue = queue.Queue()  # For tracking which log file is currently being built
         self.top_queue = queue.Queue()  # Queue for UI-thread delivery of stdout/stderr text
+        self.separator_text = ""  # current text shown in middle separator
 
     def start(self, build_func, *args, **kwargs):
         """Start curses UI and run build_func in background. Returns build result."""
@@ -294,31 +310,39 @@ class CursesUI:
 
         self.top.scrollok(True)
         self.bottom.scrollok(True)
+        # Restrict scrolling to full content area (no header rows)
+        try:
+            self.bottom.setscrreg(0, bot_h - 1)
+        except Exception:
+            # Not all curses implementations expose set scroll region; ignore if unavailable
+            pass
 
         # Draw header on top window
         try:
             top_h_actual, top_w_actual = self.top.getmaxyx()
             self.top.addstr(0, 0, "=== Una Output ===", curses.A_BOLD | color1)
-            self.top.hline(1, 0, curses.ACS_HLINE, top_w_actual)
         except Exception:
             pass
         self.top.refresh()
 
-        # Draw separator line on the root window
+        # Draw single separator line (center label will be set by set_status)
         try:
-            stdscr.hline(top_h, 0, curses.ACS_HLINE, self.w)
-            stdscr.refresh()
+            try:
+                self.set_status("Ready")
+            except Exception:
+                pass
         except Exception:
             pass
 
-        # Draw headers on bottom window
+        # Bottom window has no header to avoid corrupting content; leave it clear
         try:
-            bot_h_actual, bot_w_actual = self.bottom.getmaxyx()
-            self.bottom.addstr(0, 0, "=== Building... ===", curses.A_BOLD | color2)
-            self.bottom.hline(1, 0, curses.ACS_HLINE, bot_w_actual)
+            self.bottom.clear()
         except Exception:
             pass
-        self.bottom.refresh()
+        try:
+            self.bottom.refresh()
+        except Exception:
+            pass
 
         self.running = True
 
@@ -326,7 +350,7 @@ class CursesUI:
         self.old_stdout = sys.stdout
         self.old_stderr = sys.stderr
 
-        writer = Writer(self.top, self.lock)
+        writer = Writer(self.top, self.top_lock)
         self.writer = writer
         sys.stdout = writer
         sys.stderr = writer
@@ -400,13 +424,24 @@ class CursesUI:
             pass
 
     def set_status(self, text):
-        """Update the middle separator line with a status label (e.g. repo name)."""
+        """Update the middle separator line with a status label (e.g. repo name).
+
+        The separator is a single solid line across the screen with the provided
+        text centered: "<kind> <repo> <phase>". Stores the last text in
+        self.separator_text so background watchers can redraw it without calling
+        set_status (avoids lock re-entrancy).
+        """
         try:
-            with self.lock:
+            with self.top_lock:
                 if self.stdscr is None:
                     return
+                # store for watchers
+                try:
+                    self.separator_text = str(text)
+                except Exception:
+                    self.separator_text = ""
                 # Build the separator: ─── text ───
-                label = f" {text} "
+                label = f" {self.separator_text} "
                 total = self.w
                 left_pad = max(0, (total - len(label)) // 2)
                 right_pad = max(0, total - left_pad - len(label))
@@ -429,6 +464,7 @@ class CursesUI:
             current_log_file = None
             prev_log_file = None
             cur_y = 2  # current writing row in bottom pane
+            bottom_buffer = []  # circular buffer of visible content lines
 
             while self.running:
                 try:
@@ -442,27 +478,20 @@ class CursesUI:
                     # Update header and clear bottom pane when log file changes
                     if current_log_file != prev_log_file:
                         prev_log_file = current_log_file
-                        with self.lock:
+                        with self.bottom_lock:
                             try:
                                 bot_h, bot_w = self.bottom.getmaxyx()
-                                stem = Path(current_log_file).stem if current_log_file else "..."
-                                self.bottom.addstr(
-                                    0, 0,
-                                    "=== {} ===".format(stem),
-                                    curses.A_BOLD | curses.color_pair(2),
-                                )
-                                self.bottom.clrtoeol()
-                                self.bottom.hline(1, 0, curses.ACS_HLINE, bot_w)
-                                # Clear content area
-                                for row in range(2, bot_h):
+                                # Clear entire bottom content area (no header rows)
+                                for row in range(0, bot_h):
                                     try:
                                         self.bottom.move(row, 0)
                                         self.bottom.clrtoeol()
                                     except Exception:
                                         pass
-                                # Reset current write row
-                                cur_y = 2
-                                self.bottom.move(2, 0)
+                                # Reset current write row and buffer
+                                cur_y = 0
+                                bottom_buffer = []
+                                self.bottom.move(0, 0)
                                 self.bottom.refresh()
                             except Exception:
                                 pass
@@ -501,7 +530,7 @@ class CursesUI:
 
                     # Display new data in bottom pane
                     if data:
-                        with self.lock:
+                        with self.bottom_lock:
                             try:
                                 # Clean ANSI/control codes
                                 clean = CSI_RE.sub("", data)
@@ -510,42 +539,102 @@ class CursesUI:
                                 clean = CONTROL_RE_PLAIN.sub("", clean)
 
                                 bot_h, bot_w = self.bottom.getmaxyx()
-                                # Ensure cur_y is within content area
-                                if cur_y < 2:
-                                    cur_y = 2
-                                if cur_y > bot_h - 1:
-                                    cur_y = bot_h - 1
-                                for line in clean.split("\n"):
+                                content_h = max(0, bot_h)
+
+                                # Break incoming data into wrapped lines
+                                new_lines = []
+                                for raw_line in clean.split("\n"):
                                     try:
-                                        # Allow blank lines to advance cursor
-                                        truncated = line[: max(bot_w - 1, 0)] if line else ""
-                                        try:
-                                            self.bottom.addstr(cur_y, 0, truncated)
-                                            self.bottom.clrtoeol()
-                                        except Exception:
-                                            pass
-                                        # Advance cursor
-                                        if cur_y < bot_h - 1:
-                                            cur_y += 1
-                                            try:
-                                                self.bottom.move(cur_y, 0)
-                                            except Exception:
-                                                pass
+                                        if '\r' in raw_line:
+                                            raw_line = raw_line.split('\r')[-1]
+
+                                        if HAVE_WRAP_UTILS and HAVE_WCWIDTH:
+                                            wrapped = wrap_ansi(raw_line, bot_w - 1)
                                         else:
-                                            # scroll and keep cursor on last line
+                                            wrapped = []
+                                            line = raw_line
+                                            while line:
+                                                wrapped.append(line[: max(bot_w - 1, 0)])
+                                                line = line[max(bot_w - 1, 0):]
+
+                                        new_lines.extend(wrapped)
+                                    except Exception:
+                                        pass
+
+                                # Append to buffer and trim to fit content height
+                                if new_lines:
+                                    bottom_buffer.extend(new_lines)
+                                    if content_h > 0 and len(bottom_buffer) > content_h:
+                                        # keep most recent content_h lines
+                                        bottom_buffer = bottom_buffer[-content_h:]
+
+                                # Ensure separator and bottom header are redrawn to avoid corruption
+                                try:
+                                    # Prefer separator_text if set by set_status(), fallback to stem
+                                    sep_text = self.separator_text if getattr(self, 'separator_text', None) else (Path(current_log_file).stem if current_log_file else "...")
+                                    # Draw middle separator directly (avoid calling set_status which would re-acquire lock)
+                                    try:
+                                        label = f" {sep_text} "
+                                        total = self.w
+                                        left_pad = max(0, (total - len(label)) // 2)
+                                        right_pad = max(0, total - left_pad - len(label))
+                                        sep_line = "─" * left_pad + label + "─" * right_pad
+                                        if self.stdscr is not None:
                                             try:
-                                                self.bottom.scroll()
-                                                self.bottom.move(bot_h - 1, 0)
+                                                self.stdscr.addstr(self.sep_row, 0, sep_line[:total], curses.A_BOLD)
                                             except Exception:
                                                 pass
                                     except Exception:
                                         pass
-                                # Ensure cursor is at cur_y after writing
-                                try:
-                                    self.bottom.move(min(cur_y, bot_h - 1), 0)
+                                    # redraw bottom header
+                                    try:
+                                        # No bottom header to avoid corrupting content; ensure row 0 is cleared
+                                        bot_h, bot_w = self.bottom.getmaxyx()
+                                        try:
+                                            self.bottom.move(0, 0)
+                                            self.bottom.clrtoeol()
+                                        except Exception:
+                                            pass
+                                    except Exception:
+                                        pass
                                 except Exception:
                                     pass
-                                self.bottom.refresh()
+
+                                # Redraw content area from buffer (no header rows)
+                                for idx in range(content_h):
+                                    row = idx
+                                    try:
+                                        if idx < len(bottom_buffer):
+                                            line = bottom_buffer[idx]
+                                            try:
+                                                # Truncate to window width to prevent overflow
+                                                try:
+                                                    # prefer addnstr if available
+                                                    self.bottom.addnstr(row, 0, line, bot_w - 1)
+                                                except Exception:
+                                                    self.bottom.addstr(row, 0, line[: max(bot_w - 1, 0)])
+                                                self.bottom.clrtoeol()
+                                            except Exception:
+                                                pass
+                                        else:
+                                            try:
+                                                self.bottom.move(row, 0)
+                                                self.bottom.clrtoeol()
+                                            except Exception:
+                                                pass
+                                    except Exception:
+                                        pass
+
+                                # Refresh stdscr separator then bottom window
+                                try:
+                                    if self.stdscr:
+                                        self.stdscr.refresh()
+                                except Exception:
+                                    pass
+                                try:
+                                    self.bottom.refresh()
+                                except Exception:
+                                    pass
                             except Exception:
                                 pass
                 except Exception:

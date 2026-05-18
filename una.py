@@ -159,9 +159,39 @@ class StepRunner:
         log_file_path = self.build_logs_dir / f"{name}.txt"
         colors.info(f"[{self.arch}] Build log: {log_file_path}")
 
-        # Notify curses UI of the current log file being built
+        # Notify curses UI of the current log file being built and set a richer status
         if self.curses_ui:
-            self.curses_ui.set_current_log(str(log_file_path))
+            try:
+                # Determine kind token: 'tools' for tools components otherwise use arch name
+                kind = 'tools' if cfg.get('type') == 'tools' else (getattr(self, 'arch', '') or '')
+                # Determine phase keyword (configure/build/install) from step_name
+                phase = None
+                if isinstance(step_name, str):
+                    lname = step_name.lower()
+                    if 'configure' in lname:
+                        phase = 'configure'
+                    elif 'install' in lname:
+                        phase = 'install'
+                    elif 'build' in lname:
+                        phase = 'build'
+                if not phase:
+                    phase = str(step_name)
+                # Compose label: "<tools|arch> <target> <status>"
+                parts = [p for p in (kind, name, phase) if p]
+                label = " ".join(parts)
+                try:
+                    self.curses_ui.set_status(label)
+                except Exception:
+                    pass
+                try:
+                    self.curses_ui.set_current_log(str(log_file_path))
+                except Exception:
+                    pass
+            except Exception:
+                try:
+                    self.curses_ui.set_current_log(str(log_file_path))
+                except Exception:
+                    pass
 
         # Use file descriptor redirection to capture all output (including subprocesses)
         # Save original stdout and stderr file descriptors
@@ -197,10 +227,51 @@ class StepRunner:
         if use_pipe_capture:
             # Create a pipe for capturing output
             pipe_read, pipe_write = os.pipe()
+            # Prevent the read end from being inherited by child execs; they only need stdout/stderr
+            try:
+                os.set_inheritable(pipe_read, False)
+            except Exception:
+                pass
+            # Make the original write end non-inheritable; we'll dup it to FD1/2 and close the original
+            try:
+                os.set_inheritable(pipe_write, False)
+            except Exception:
+                pass
 
-            # Redirect stdout and stderr (FD-level) to the pipe
+            # Redirect stdout and stderr (FD-level) to the pipe (via dup2 to FDs 1 and 2)
             os.dup2(pipe_write, 1)
             os.dup2(pipe_write, 2)
+            # Ensure stdout/stderr are inheritable so child processes see them
+            try:
+                os.set_inheritable(1, True)
+                os.set_inheritable(2, True)
+            except Exception:
+                pass
+            # Close the original write FD because FD1/2 now refer to the pipe; closing
+            # avoids extra write-end references that would prevent reader EOF.
+            try:
+                os.close(pipe_write)
+            except Exception:
+                pass
+
+            # Debug: write current fd list to log file (helps diagnose stray write-ends)
+            try:
+                try:
+                    fds = sorted(os.listdir('/proc/self/fd'))
+                except Exception:
+                    fds = []
+                if hasattr(log_file, 'write'):
+                    try:
+                        log_file.write(f"DEBUG_FDS_AFTER_DUP: {fds}\n")
+                        log_file.flush()
+                        try:
+                            os.fsync(log_file.fileno())
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
             # Rebind Python-level sys.stdout/stderr to a Tee so Python prints go to both the
             # original sys.stdout (usually the curses Writer) and the pipe (so reader can log)
@@ -366,8 +437,25 @@ class StepRunner:
         else:
             # Non-curses mode: use non-blocking tee to avoid blocking
             pipe_read_fd, pipe_write_fd = os.pipe()
+            try:
+                os.set_inheritable(pipe_read_fd, False)
+            except Exception:
+                pass
+            try:
+                os.set_inheritable(pipe_write_fd, False)
+            except Exception:
+                pass
             os.dup2(pipe_write_fd, 1)
             os.dup2(pipe_write_fd, 2)
+            try:
+                os.set_inheritable(1, True)
+                os.set_inheritable(2, True)
+            except Exception:
+                pass
+            try:
+                os.close(pipe_write_fd)
+            except Exception:
+                pass
 
             def _tee_thread():
                 import select
@@ -398,7 +486,7 @@ class StepRunner:
                 # Stop the reader thread
                 stop_event.set()
 
-                # Close the write end of the pipe to signal EOF
+                # Close the write end of the pipe to signal EOF (if still open)
                 try:
                     os.close(pipe_write)
                 except Exception:

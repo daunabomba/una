@@ -394,10 +394,46 @@ def run_build(args):
                 # If curses is active, use pipe capture to write to both curses UI and log file
                 if use_curses and hasattr(old_sys_stdout, 'write'):
                     pipe_read, pipe_write = os.pipe()
-                    
+                    try:
+                        os.set_inheritable(pipe_read, False)
+                    except Exception:
+                        pass
+                    try:
+                        os.set_inheritable(pipe_write, False)
+                    except Exception:
+                        pass
                     # Redirect FD stdout/stderr to pipe
                     os.dup2(pipe_write, 1)
                     os.dup2(pipe_write, 2)
+                    try:
+                        os.set_inheritable(1, True)
+                        os.set_inheritable(2, True)
+                    except Exception:
+                        pass
+                    # Close original write fd; FD1/2 now reference the pipe. This avoids
+                    # leaving extra write-end references that would prevent the reader seeing EOF.
+                    try:
+                        os.close(pipe_write)
+                    except Exception:
+                        pass
+
+                    # Debug: write fd list to logfile to help diagnose stray fds
+                    try:
+                        try:
+                            fds = sorted(os.listdir('/proc/self/fd'))
+                        except Exception:
+                            fds = []
+                        try:
+                            log_file.write(f"DEBUG_FDS_AFTER_DUP: {fds}\n")
+                            log_file.flush()
+                            try:
+                                os.fsync(log_file.fileno())
+                            except Exception:
+                                pass
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
                     
                     # Create async writer to handle both log file and curses UI
                     class AsyncLogWriter:
@@ -510,15 +546,35 @@ def run_build(args):
                     if hasattr(module, "tools_install"):
                         module.tools_install(tools_install_dir)
                     
-                    # Close pipe to signal end
-                    os.close(pipe_write)
+                    # Close pipe to signal end (may already be closed after dup2)
+                    try:
+                        os.close(pipe_write)
+                    except Exception:
+                        pass
                     reader.join(timeout=2)
                     async_writer.put(None)
                 else:
                     # Non-curses mode: tee output to terminal and log file
                     pipe_read, pipe_write = os.pipe()
+                    try:
+                        os.set_inheritable(pipe_read, False)
+                    except Exception:
+                        pass
+                    try:
+                        os.set_inheritable(pipe_write, False)
+                    except Exception:
+                        pass
                     os.dup2(pipe_write, 1)
                     os.dup2(pipe_write, 2)
+                    try:
+                        os.set_inheritable(1, True)
+                        os.set_inheritable(2, True)
+                    except Exception:
+                        pass
+                    try:
+                        os.close(pipe_write)
+                    except Exception:
+                        pass
 
                     def _tee_thread():
                         try:
