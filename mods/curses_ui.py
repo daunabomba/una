@@ -387,9 +387,15 @@ class CursesUI:
             self.close()
 
     def set_current_log(self, log_path):
-        """Notify watcher of the current log file being built."""
+        """Notify watcher of the current log file being built and update status with basename."""
         try:
             self.current_log_queue.put_nowait(log_path)
+            # Also reflect the current log in the middle status line (use stem)
+            try:
+                stem = Path(log_path).stem if log_path else "..."
+                self.set_status(stem)
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -422,6 +428,7 @@ class CursesUI:
             last_pos = 0
             current_log_file = None
             prev_log_file = None
+            cur_y = 2  # current writing row in bottom pane
 
             while self.running:
                 try:
@@ -453,6 +460,8 @@ class CursesUI:
                                         self.bottom.clrtoeol()
                                     except Exception:
                                         pass
+                                # Reset current write row
+                                cur_y = 2
                                 self.bottom.move(2, 0)
                                 self.bottom.refresh()
                             except Exception:
@@ -501,22 +510,41 @@ class CursesUI:
                                 clean = CONTROL_RE_PLAIN.sub("", clean)
 
                                 bot_h, bot_w = self.bottom.getmaxyx()
+                                # Ensure cur_y is within content area
+                                if cur_y < 2:
+                                    cur_y = 2
+                                if cur_y > bot_h - 1:
+                                    cur_y = bot_h - 1
                                 for line in clean.split("\n"):
-                                    if not line:
-                                        continue
                                     try:
-                                        y, x = self.bottom.getyx()
-                                        truncated = line[: max(bot_w - 1, 0)]
-                                        self.bottom.addstr(y, 0, truncated)
-                                        self.bottom.clrtoeol()
-                                        next_y = y + 1
-                                        if next_y < bot_h:
-                                            self.bottom.move(next_y, 0)
+                                        # Allow blank lines to advance cursor
+                                        truncated = line[: max(bot_w - 1, 0)] if line else ""
+                                        try:
+                                            self.bottom.addstr(cur_y, 0, truncated)
+                                            self.bottom.clrtoeol()
+                                        except Exception:
+                                            pass
+                                        # Advance cursor
+                                        if cur_y < bot_h - 1:
+                                            cur_y += 1
+                                            try:
+                                                self.bottom.move(cur_y, 0)
+                                            except Exception:
+                                                pass
                                         else:
-                                            self.bottom.scroll()
-                                            self.bottom.move(bot_h - 1, 0)
+                                            # scroll and keep cursor on last line
+                                            try:
+                                                self.bottom.scroll()
+                                                self.bottom.move(bot_h - 1, 0)
+                                            except Exception:
+                                                pass
                                     except Exception:
                                         pass
+                                # Ensure cursor is at cur_y after writing
+                                try:
+                                    self.bottom.move(min(cur_y, bot_h - 1), 0)
+                                except Exception:
+                                    pass
                                 self.bottom.refresh()
                             except Exception:
                                 pass
