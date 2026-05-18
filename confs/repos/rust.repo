@@ -1,0 +1,8 @@
+[rust]
+una_repo = rust.git
+repo_dir = repo/rust
+una_file = una/tools.py
+origin_url = rust.git
+type = tools
+depends = llvm-tools
+tag = llvmorg-22.1.5
