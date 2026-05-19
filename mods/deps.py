@@ -130,3 +130,32 @@ def filter_repos_for_build(repos: list) -> list:
 def filter_repos_for_sync(repos: list) -> list:
     """Filter repos to non-virtual repos (for sync operations)."""
     return [r for r in repos if not r.get("is_virtual")]
+
+
+def get_sync_set(dep_graph: dict, repos: list) -> set:
+    """
+    Compute the set of repository names that need to be synced.
+
+    Includes:
+    - All names present in the (pruned) dependency graph.
+    - Any 'tools' type repositories that are referenced (directly or transitively)
+      by entries in the pruned dependency graph.
+    """
+    name_map = {r["name"]: r for r in repos}
+    sync = set(dep_graph.keys())
+
+    # Check direct and transitive dependencies for referenced tools.
+    for name in list(dep_graph.keys()):
+        # gather transitive deps using helper (works with pruned graph)
+        try:
+            deps = get_transitive_deps(name, dep_graph)
+        except Exception:
+            deps = set(dep_graph.get(name, []))
+        # include direct deps as well
+        deps.update(dep_graph.get(name, []))
+        for dep in deps:
+            dep_cfg = name_map.get(dep)
+            if dep_cfg and dep_cfg.get("type") == "tools":
+                sync.add(dep)
+
+    return sync

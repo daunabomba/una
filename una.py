@@ -45,6 +45,7 @@ from mods.deps import (
     get_keep_dirs,
     filter_repos_for_build,
     filter_repos_for_sync,
+    get_sync_set,
 )
 from mods.git_ops import (
     sync_repo,
@@ -1042,27 +1043,8 @@ def main():
 
     una_base = get_git_remote_base("una")
     origin_base = get_git_remote_base("origin")
-
-    repos = filter_repos_for_sync(repos_config)
-    for r in repos:
-        if una_base:
-            base = una_base
-            if not base.endswith("/") and not base.endswith(":"):
-                base += "/"
-            r["una_url"] = f"{base}{r['una_repo']}"
-        else:
-            r["una_url"] = "UNKNOWN_BASE"
-
-        if "origin_url" in r:
-            ourl = r["origin_url"]
-            if "/" not in ourl and ":" not in ourl:
-                if origin_base:
-                    obase = origin_base
-                    if not obase.endswith("/") and not obase.endswith(":"):
-                        obase += "/"
-                    r["origin_url"] = f"{obase}{ourl}"
-                else:
-                    r["origin_url"] = f"UNKNOWN_ORIGIN_BASE/{ourl}"
+    # repos will be determined after dependency analysis to ensure tools are only included if referenced
+    repos = []
 
     build_all = False
     if args.build is not None and len(args.build) == 0:
@@ -1093,7 +1075,33 @@ def main():
 
     keep_repo_dirs = get_keep_dirs(repos_config, dep_graph)
 
-    repos_to_sync = {r["name"] for r in filtered_repos}
+    # Compute sync set: include pruned build graph and any referenced tool repos
+    sync_set = get_sync_set(dep_graph, repos_config)
+    repos_to_sync = set(sync_set)
+
+    # Build 'repos' list (non-virtual repos that will be considered in operations)
+    repos = [r for r in repos_config if not r.get("is_virtual") and r["name"] in repos_to_sync]
+
+    # Set una_url and origin_url for the repos to be synced
+    for r in repos:
+        if una_base:
+            base = una_base
+            if not base.endswith("/") and not base.endswith(":"):
+                base += "/"
+            r["una_url"] = f"{base}{r.get('una_repo', '')}"
+        else:
+            r["una_url"] = "UNKNOWN_BASE"
+
+        if "origin_url" in r:
+            ourl = r["origin_url"]
+            if "/" not in ourl and ":" not in ourl:
+                if origin_base:
+                    obase = origin_base
+                    if not obase.endswith("/") and not obase.endswith(":"):
+                        obase += "/"
+                    r["origin_url"] = f"{obase}{ourl}"
+                else:
+                    r["origin_url"] = f"UNKNOWN_ORIGIN_BASE/{ourl}"
 
     # Prepare git log directory for pre-build git operations
     git_logs_dir = bld_base / "git_logs"
