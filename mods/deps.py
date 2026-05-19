@@ -106,9 +106,10 @@ def get_keep_dirs(repos: list, dep_graph: dict) -> set:
         if cfg and "repo_dir" in cfg:
             keep.add(Path(cfg["repo_dir"]).absolute())
 
-    # Always keep tools repos
+    # Keep tools repos only if they appear in the pruned dependency graph
+    # (i.e., they are required by top-level config or are transitive dependencies).
     for r in repos:
-        if r.get("type") == "tools" and "repo_dir" in r:
+        if r.get("type") == "tools" and r["name"] in dep_graph and "repo_dir" in r:
             keep.add(Path(r["repo_dir"]).absolute())
 
     return keep
