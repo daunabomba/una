@@ -1058,9 +1058,19 @@ def main():
             build_all = True
 
     if args.build is not None and not build_all:
+        # User explicitly requested specific build components
         required_names = set(args.build)
     else:
-        required_names = {r["name"] for r in repos_config}
+        # Default behavior: use top-level 'components' from global_cfg if present;
+        # otherwise fall back to all repos in config.
+        if "components" in global_cfg:
+            required_names = {
+                c.strip()
+                for c in global_cfg["components"].replace(",", " ").split()
+                if c.strip()
+            }
+        else:
+            required_names = {r["name"] for r in repos_config}
 
     filtered_repos = filter_by_requested(repos_config, required_names)
 
