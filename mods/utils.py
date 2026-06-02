@@ -100,7 +100,11 @@ def init_or_reset_repo(
     if not os.path.exists(repo_dir):
         clone_url = origin_url if with_origin else una_url
         colors.info(f">>> git clone {clone_url} {repo_dir}")
-        repo = Repo.clone_from(clone_url, repo_dir, progress=TqdmProgress())
+        clone_kwargs = {"progress": TqdmProgress()}
+        if clone_url.startswith("/") or clone_url.startswith("file://") or clone_url.startswith("./") or clone_url.startswith("../"):
+            clone_kwargs["local"] = True
+            clone_kwargs["shared"] = True
+        repo = Repo.clone_from(clone_url, repo_dir, **clone_kwargs)
         if not with_origin:
             # If we cloned from una_url, it's currently named 'origin'. Rename it to 'una'.
             repo.remotes.origin.rename(remote_una_name)
