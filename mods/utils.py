@@ -112,6 +112,16 @@ def init_or_reset_repo(
         # print(f"Repo exists at {repo_dir}; opening...")
         repo = Repo(repo_dir)
 
+    # Configure repository to rebase on pull
+    try:
+        current_pull_rebase = repo.git.config("--get", "pull.rebase")
+    except:
+        current_pull_rebase = ""
+
+    if current_pull_rebase != "true":
+        colors.info(f">>> git config pull.rebase true")
+        repo.git.config("pull.rebase", "true")
+
     # 1. Update Origin Remote
     if with_origin:
         if "origin" not in [r.name for r in repo.remotes]:
