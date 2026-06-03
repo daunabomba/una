@@ -933,6 +933,17 @@ def main():
         parser.print_help()
         sys.exit(0)
 
+    try:
+        from git import Repo
+        top_repo = Repo(BASE_DIR)
+        remote_names = [r.name for r in top_repo.remotes]
+        if "una" not in remote_names or "origin" not in remote_names:
+            colors.error("Error: The top-level una repository must have both 'una' and 'origin' remotes configured.")
+            sys.exit(1)
+    except Exception as e:
+        colors.error(f"Error checking top-level repository remotes: {e}")
+        sys.exit(1)
+
     if args.trace:
         init_trace(args.trace)
 
