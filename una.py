@@ -557,7 +557,7 @@ def main():
                     from mods.trace import repo_cleaned
                     repo_cleaned(Path(r_path))
                 print(f">>> git clean -fdx -q  (in {r_path})")
-                subprocess.run(["git", "clean", "-fdx", "-q"], cwd=r_path, check=True)
+                subprocess.run(["git", "clean", "-fdx", "-q"], cwd=r_path, check=True, stdin=subprocess.DEVNULL)
                 cleaned_dirs.add(r_path)
 
         repo_base = BASE_DIR / "repo"
@@ -578,7 +578,8 @@ def main():
             sys.exit(1)
         print(f">>> git clean -xfd -e bld/ -e repo/ -q  (in {BASE_DIR})")
         subprocess.run(
-            ["git", "clean", "-xfd", "-e", "bld/", "-e", "repo/", "-q"], cwd=BASE_DIR
+            ["git", "clean", "-xfd", "-e", "bld/", "-e", "repo/", "-q"], cwd=BASE_DIR,
+            stdin=subprocess.DEVNULL,
         )
 
     if args.report:

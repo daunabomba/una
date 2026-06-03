@@ -129,7 +129,9 @@ class SubprocessRunner:
             colors.info(f"Executing in: {cwd}")
         colors.info(f"{env_display} {cmd_display}")
 
-        # Execute subprocess
+        # Execute subprocess with stdin closed to avoid inheriting terminal input
+        if 'stdin' not in kwargs:
+            kwargs['stdin'] = subprocess.DEVNULL
         return subprocess.run(cmd, cwd=cwd, env=env, check=check, shell=shell, **kwargs)
     
     def _log_to_trace(self, cmd, env_display, cmd_display):
@@ -395,10 +397,6 @@ class StepRunner:
                                     self.logfile.write(clean_text)
                                     try:
                                         self.logfile.flush()
-                                        try:
-                                            os.fsync(self.logfile.fileno())
-                                        except Exception:
-                                            pass
                                     except Exception:
                                         pass
                             except Exception:
@@ -680,7 +678,8 @@ def propagate_skel(staging_dir, target_dir):
                 shutil.rmtree(d_item)
 
         subprocess.run(
-            ["cp", "-a", "--remove-destination", f"{skel_dir}/.", str(dest)], check=True
+            ["cp", "-a", "--remove-destination", f"{skel_dir}/.", str(dest)], check=True,
+            stdin=subprocess.DEVNULL,
         )
 
 
@@ -842,9 +841,13 @@ def run_build(args):
             old_sys_stderr = sys.stderr
             
             try:
+                pipe_read = None
+                pipe_write = None
+                reader = None
+                async_writer = None
+                tee_thread = None
                 log_file = open(log_file_path, "a")
-                
-                # If curses is active, use pipe capture to write to both curses UI and log file
+
                 if use_curses and hasattr(old_sys_stdout, 'write'):
                     pipe_read, pipe_write = os.pipe()
                     try:
@@ -855,7 +858,6 @@ def run_build(args):
                         os.set_inheritable(pipe_write, False)
                     except Exception:
                         pass
-                    # Redirect FD stdout/stderr to pipe
                     os.dup2(pipe_write, 1)
                     os.dup2(pipe_write, 2)
                     try:
@@ -863,32 +865,11 @@ def run_build(args):
                         os.set_inheritable(2, True)
                     except Exception:
                         pass
-                    # Close original write fd; FD1/2 now reference the pipe. This avoids
-                    # leaving extra write-end references that would prevent the reader seeing EOF.
                     try:
                         os.close(pipe_write)
                     except Exception:
                         pass
 
-                    # Debug: write fd list to logfile to help diagnose stray fds
-                    try:
-                        try:
-                            fds = sorted(os.listdir('/proc/self/fd'))
-                        except Exception:
-                            fds = []
-                        try:
-                            log_file.write(f"DEBUG_FDS_AFTER_DUP: {fds}\n")
-                            log_file.flush()
-                            try:
-                                os.fsync(log_file.fileno())
-                            except Exception:
-                                pass
-                        except Exception:
-                            pass
-                    except Exception:
-                        pass
-                    
-                    # Create async writer to handle both log file and curses UI
                     class AsyncLogWriter:
                         def __init__(self, logfile, write_to_top=True, top_queue=None):
                             self.logfile = logfile
@@ -897,7 +878,7 @@ def run_build(args):
                             self.q = queue.Queue()
                             self.thread = threading.Thread(target=self._run, daemon=True)
                             self.thread.start()
-                        
+
                         def _run(self):
                             while True:
                                 try:
@@ -911,20 +892,14 @@ def run_build(args):
                                     text = text.replace('\r', '')
                                 try:
                                     if hasattr(self.logfile, 'write'):
-                                        # Strip ANSI codes for log file
                                         clean_text = strip_ansi_codes(text)
                                         self.logfile.write(clean_text)
                                         try:
                                             self.logfile.flush()
-                                            try:
-                                                os.fsync(self.logfile.fileno())
-                                            except Exception:
-                                                pass
                                         except Exception:
                                             pass
                                 except Exception:
                                     pass
-                                # Enqueue top text for UI thread; avoid calling curses from this background thread
                                 if self.write_to_top and self.top_queue is not None:
                                     try:
                                         self.top_queue.put(text)
@@ -939,22 +914,28 @@ def run_build(args):
                                     self.logfile.flush()
                             except Exception:
                                 pass
-                        
+
                         def put(self, txt):
                             try:
                                 self.q.put(txt)
                             except Exception:
                                 pass
-                        
+
                         def flush(self):
                             try:
                                 self.q.join()
                             except Exception:
                                 pass
-                    
+
+                        def stop(self):
+                            try:
+                                self.q.put(None)
+                                self.thread.join(timeout=5)
+                            except Exception:
+                                pass
+
                     async_writer = AsyncLogWriter(log_file, write_to_top=True, top_queue=(curses_ui.top_queue if curses_ui else None))
-                    
-                    # Rebind sys.stdout/stderr to StdoutReplacer that queues writes
+
                     class StdoutReplacer:
                         def __init__(self, aw):
                             self.aw = aw
@@ -973,11 +954,10 @@ def run_build(args):
                                 pass
                         def isatty(self):
                             return False
-                    
+
                     sys.stdout = StdoutReplacer(async_writer)
                     sys.stderr = sys.stdout
-                    
-                    # Pipe reader thread
+
                     def reader_thread():
                         while True:
                             try:
@@ -987,27 +967,26 @@ def run_build(args):
                                 async_writer.put(data.decode('utf-8', errors='replace'))
                             except Exception:
                                 break
-                    
+
                     reader = threading.Thread(target=reader_thread, daemon=True)
                     reader.start()
-                    
-                    # Run tool build
+
                     if hasattr(module, "tools_configure"):
                         module.tools_configure(tools_install_dir, arches=get_all_arches())
                     if hasattr(module, "tools_build"):
                         module.tools_build(tools_install_dir)
                     if hasattr(module, "tools_install"):
                         module.tools_install(tools_install_dir)
-                    
-                    # Close pipe to signal end (may already be closed after dup2)
+
                     try:
                         os.close(pipe_write)
                     except Exception:
                         pass
-                    reader.join(timeout=2)
-                    async_writer.put(None)
+                    if reader:
+                        reader.join(timeout=2)
+                    if async_writer:
+                        async_writer.stop()
                 else:
-                    # Non-curses mode: tee output to terminal and log file
                     pipe_read, pipe_write = os.pipe()
                     try:
                         os.set_inheritable(pipe_read, False)
@@ -1050,8 +1029,7 @@ def run_build(args):
                     if hasattr(module, "tools_install"):
                         module.tools_install(tools_install_dir)
             finally:
-                # Close pipe_write to signal EOF to tee thread (non-curses mode)
-                if not use_curses and 'pipe_write' in dir() and pipe_write is not None:
+                if not use_curses and pipe_write is not None:
                     try:
                         os.close(pipe_write)
                     except Exception:
@@ -1062,8 +1040,17 @@ def run_build(args):
                 os.close(original_stderr_fd)
                 sys.stdout = old_sys_stdout
                 sys.stderr = old_sys_stderr
-                # Wait for tee thread to finish draining remaining data
-                if not use_curses and 'tee_thread' in dir() and tee_thread is not None:
+                if pipe_read is not None:
+                    try:
+                        os.close(pipe_read)
+                    except Exception:
+                        pass
+                if async_writer is not None:
+                    try:
+                        async_writer.stop()
+                    except Exception:
+                        pass
+                if not use_curses and tee_thread is not None:
                     try:
                         tee_thread.join(timeout=5)
                     except Exception:
@@ -1136,7 +1123,8 @@ def run_build(args):
                 sys.exit(1)
             colors.info(f">>> git clean -fdx -e .una_config  (in {r_path})")
             subprocess.run(
-                ["git", "clean", "-fdx", "-e", ".una_config"], cwd=r_path, check=True
+                ["git", "clean", "-fdx", "-e", ".una_config"], cwd=r_path, check=True,
+                stdin=subprocess.DEVNULL,
             )
             # Ensure submodules are also cleaned
             if (r_path / ".gitmodules").exists():
@@ -1156,6 +1144,7 @@ def run_build(args):
                         ],
                         cwd=r_path,
                         check=True,
+                        stdin=subprocess.DEVNULL,
                     )
                 except subprocess.CalledProcessError:
                     pass
@@ -1361,7 +1350,7 @@ def run_build(args):
                         os.dup2(f.fileno(), 1)
                         os.dup2(f.fileno(), 2)
                         print(f">>> git clean -qfdx  (in {r_path})")
-                        subprocess.run(["git", "clean", "-qfdx"], cwd=r_path, check=True)
+                        subprocess.run(["git", "clean", "-qfdx"], cwd=r_path, check=True, stdin=subprocess.DEVNULL)
                         if (r_path / ".gitmodules").exists():
                             try:
                                 print(f">>> git submodule foreach --recursive git clean -qfdx  (in {r_path})")
@@ -1377,6 +1366,7 @@ def run_build(args):
                                     ],
                                     cwd=r_path,
                                     check=True,
+                                    stdin=subprocess.DEVNULL,
                                 )
                             except subprocess.CalledProcessError:
                                 pass
@@ -1387,7 +1377,7 @@ def run_build(args):
                     os.close(original_stderr_fd)
             else:
                 print(f">>> git clean -qfdx  (in {r_path})")
-                subprocess.run(["git", "clean", "-qfdx"], cwd=r_path, check=True)
+                subprocess.run(["git", "clean", "-qfdx"], cwd=r_path, check=True, stdin=subprocess.DEVNULL)
                 if (r_path / ".gitmodules").exists():
                     try:
                         print(f">>> git submodule foreach --recursive git clean -qfdx  (in {r_path})")
@@ -1403,6 +1393,7 @@ def run_build(args):
                             ],
                             cwd=r_path,
                             check=True,
+                            stdin=subprocess.DEVNULL,
                         )
                     except subprocess.CalledProcessError:
                         pass

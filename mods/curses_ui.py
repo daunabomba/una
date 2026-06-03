@@ -5,6 +5,7 @@ Bottom 50%: build logs monitor
 """
 
 import curses
+import os
 import sys
 import threading
 import time
@@ -346,6 +347,21 @@ class CursesUI:
 
         self.running = True
 
+        # Make getch() non-blocking so the UI loop doesn't freeze waiting for input
+        try:
+            stdscr.timeout(50)
+        except Exception:
+            pass
+
+        # Close stdin to prevent curses/subprocesses from blocking on terminal input
+        # Pipes and subprocesses spawned during build should not inherit terminal stdin
+        try:
+            devnull_fd = os.open(os.devnull, os.O_RDONLY)
+            os.dup2(devnull_fd, 0)
+            os.close(devnull_fd)
+        except Exception:
+            pass
+
         # Redirect stdout/stderr to top window
         self.old_stdout = sys.stdout
         self.old_stderr = sys.stderr
@@ -475,20 +491,11 @@ class CursesUI:
                     except queue.Empty:
                         pass
 
-                    # Update header and clear bottom pane when log file changes
                     if current_log_file != prev_log_file:
                         prev_log_file = current_log_file
                         with self.bottom_lock:
                             try:
-                                bot_h, bot_w = self.bottom.getmaxyx()
-                                # Clear entire bottom content area (no header rows)
-                                for row in range(0, bot_h):
-                                    try:
-                                        self.bottom.move(row, 0)
-                                        self.bottom.clrtoeol()
-                                    except Exception:
-                                        pass
-                                # Reset current write row and buffer
+                                self.bottom.clear()
                                 cur_y = 0
                                 bottom_buffer = []
                                 self.bottom.move(0, 0)
@@ -639,7 +646,7 @@ class CursesUI:
                                 pass
                 except Exception:
                     pass
-                time.sleep(0.2)
+                time.sleep(0.05)
 
         self.log_thread = threading.Thread(target=watcher, daemon=True)
         self.log_thread.start()
