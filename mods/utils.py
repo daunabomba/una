@@ -1,3 +1,4 @@
+import re
 from git import Repo, RemoteProgress
 import shutil
 import os
@@ -443,3 +444,9 @@ def get_cross_prefix(arch: str) -> str:
         return "riscv64-linux-musl-"
     else:
         return f"{arch}-linux-musl-"
+
+
+def strip_ansi_codes(text):
+    """Remove ANSI escape sequences from text."""
+    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    return ansi_escape.sub('', text)

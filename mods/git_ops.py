@@ -2,7 +2,10 @@
 Git operations orchestration for una.
 Wraps utils.py functions for repo-level workflows.
 """
-
+import os
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 from git import Repo
 
@@ -13,8 +16,10 @@ from mods.utils import (
     get_remote_head,
     TqdmProgress,
     init_or_reset_repo,
+    is_repo_dirty,
 )
-from mods.trace import is_enabled, repo_created, repo_synced
+from mods.trace import is_enabled, repo_created, repo_synced, repo_removed
+from mods.snapshot import get_report_paths
 
 
 def handle_top_level_repo(
@@ -342,6 +347,97 @@ def _find_repo_file_with_tag(comp_name: str, base_dir: Path) -> Path:
     repos_dir = base_dir / "confs" / "repos"
     if not repos_dir.exists():
         return None
+
+
+def sync_kernel_config(src: Path, dest: Path):
+    """
+    Syncs back the updated kernel config, stripping leading comments
+    and forcing specific values like CONFIG_CC_VERSION_TEXT.
+    """
+    if not src.exists():
+        return
+    content = src.read_text()
+    lines = content.splitlines()
+    out_lines = []
+
+    # Skip leading comments and empty lines
+    header_done = False
+    for line in lines:
+        if not header_done:
+            if line.strip().startswith("#") or not line.strip():
+                continue
+            else:
+                header_done = True
+
+        # Process entries
+        if line.startswith("CONFIG_CC_VERSION_TEXT="):
+            out_lines.append('CONFIG_CC_VERSION_TEXT="clang"')
+        else:
+            out_lines.append(line)
+
+    dest.write_text("\n".join(out_lines) + "\n")
+
+
+def get_git_remote_base(remote_name="una"):
+    """
+    Attempts to determine the base URL of the current git repository's remote.
+    Specifically looks for the remote specified by remote_name.
+    """
+    try:
+        script_dir = Path(__file__).resolve().parent.parent
+        repo = Repo(script_dir, search_parent_directories=True)
+
+        for r in repo.remotes:
+            if r.name == remote_name:
+                url = str(r.url)
+                if "/" in url:
+                    return url.rsplit("/", 1)[0]
+    except Exception:
+        pass
+    return None
+
+
+def remove_repo(name, repos, arches, bld_base):
+    """Removes a repository from the list, cleans build outputs and deletes repo dir."""
+    target = next((r for r in repos if r["name"] == name), None)
+    if not target:
+        colors.error(f"Error: Repository '{name}' not found.")
+        return False
+
+    colors.info(f"Removing repository '{name}'...")
+
+    # 1. Clean build outputs for each architecture
+    for arch in arches:
+        report_file = bld_base / arch / "report" / f"{name}.txt"
+        if report_file.exists():
+            colors.info(f"[{arch}] Cleaning build outputs for {name}...")
+            paths = get_report_paths(report_file)
+            staging_dir = bld_base / "staging"
+            target_dir = bld_base / "target"
+
+            for p in paths:
+                try:
+                    if p.startswith("staging/"):
+                        (staging_dir / p[8:]).unlink(missing_ok=True)
+                    elif p.startswith("target/"):
+                        (target_dir / p[7:]).unlink(missing_ok=True)
+                except Exception as e:
+                    colors.warn(f"[{arch}] Warning: Failed to remove {p}: {e}")
+            report_file.unlink()
+
+    # 2. Delete the repository directory
+    repo_dir = Path(target["repo_dir"])
+    if repo_dir.exists():
+        print(f"Deleting repository directory: {repo_dir}")
+        if is_enabled():
+            repo_removed(name, repo_dir)
+        shutil.rmtree(repo_dir)
+
+    # 3. Remove from repos list to prevent sync attempts
+    repos[:] = [r for r in repos if r["name"] != name]
+
+    colors.info(f"Repository '{name}' removed successfully.")
+    return True
 
     # Build a map: section_name -> (file_path, configparser_section)
     section_map = {}

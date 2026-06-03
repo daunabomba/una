@@ -1,36 +1,48 @@
 """
-Build logic for una - extracted to avoid indentation issues.
+Build logic for una.
 """
 
-import sys
-import os
-import subprocess
+import importlib.util
 import json
-import shutil
-from pathlib import Path
-import contextlib
-import threading
+import os
 import queue
 import re
+import select
+import shutil
+import subprocess
+import sys
+import threading
+import contextlib
+from pathlib import Path
 
+from mods import colors
+from mods.snapshot import (
+    take_snapshot,
+    compare_snapshots,
+    write_report,
+    get_report_paths,
+)
 from mods.trace import (
     is_enabled,
     tools_step_start,
     tools_step_end,
     build_step_start,
     build_step_end,
+    trace_file_open,
+    trace_file_close,
+    trace_exception,
 )
-from mods.utils import get_all_arches
+from mods.utils import (
+    get_all_arches,
+    get_target_triple,
+    get_arch_flags,
+    is_repo_dirty,
+    strip_ansi_codes,
+)
+from mods.git_ops import sync_kernel_config, sync_repo
+from mods.config import save_repo_state
 
 # These will be set by init_build()
-colors = None
-load_repo_una = None
-StepRunner = None
-get_target_triple = None
-get_arch_flags = None
-propagate_skel = None
-sync_kernel_config = None
-is_repo_dirty = None
 BASE_DIR = None
 bld_base = None
 arches = None
@@ -41,11 +53,9 @@ build_all = None
 tools_install_dir = None
 skel_dir = None
 global_cfg = None
+use_curses = False
 git_logs_dir = None
 curses_ui = None
-# Sync-related globals
-sync_repo_func = None
-save_repo_state_func = None
 repos_config_all = None
 repos_to_sync_set = None
 una_base_str = None
@@ -142,12 +152,6 @@ class SubprocessRunner:
             colors.warn(f"Failed to write to trace file {self.trace_file}: {e}")
 
 
-def strip_ansi_codes(text):
-    """Remove ANSI escape sequences from text."""
-    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-    return ansi_escape.sub('', text)
-
-
 @contextlib.contextmanager
 def redirect_git_output(log_file_path):
     """Context manager to redirect stdout/stderr to a git log file."""
@@ -167,14 +171,6 @@ def redirect_git_output(log_file_path):
 
 
 def init_build(
-    colors_mod,
-    load_repo_una_func,
-    StepRunner_class,
-    get_target_triple_func,
-    get_arch_flags_func,
-    propagate_skel_func,
-    sync_kernel_config_func,
-    is_repo_dirty_func,
     BASE_DIR_val,
     bld_base_val,
     arches_val,
@@ -188,27 +184,15 @@ def init_build(
     use_curses_val=False,
     git_logs_dir_val=None,
     curses_ui_val=None,
-    sync_repo_func_val=None,
-    save_repo_state_func_val=None,
     repos_config_all_val=None,
     repos_to_sync_set_val=None,
     una_base_str_val=None,
 ):
-    """Initialize the build module with required functions and variables."""
-    global colors, load_repo_una, StepRunner, get_target_triple
-    global get_arch_flags, propagate_skel, sync_kernel_config, is_repo_dirty
+    """Initialize the build module with required variables."""
     global BASE_DIR, bld_base, arches, repos, repos_to_process
     global required_names, build_all, tools_install_dir, skel_dir, global_cfg, use_curses, git_logs_dir, curses_ui
-    global sync_repo_func, save_repo_state_func, repos_config_all, repos_to_sync_set, una_base_str
+    global repos_config_all, repos_to_sync_set, una_base_str
 
-    colors = colors_mod
-    load_repo_una = load_repo_una_func
-    StepRunner = StepRunner_class
-    get_target_triple = get_target_triple_func
-    get_arch_flags = get_arch_flags_func
-    propagate_skel = propagate_skel_func
-    sync_kernel_config = sync_kernel_config_func
-    is_repo_dirty = is_repo_dirty_func
     BASE_DIR = BASE_DIR_val
     bld_base = bld_base_val
     arches = arches_val
@@ -222,16 +206,487 @@ def init_build(
     use_curses = use_curses_val
     git_logs_dir = git_logs_dir_val
     curses_ui = curses_ui_val
-    sync_repo_func = sync_repo_func_val
-    save_repo_state_func = save_repo_state_func_val
     repos_config_all = repos_config_all_val
     repos_to_sync_set = repos_to_sync_set_val
     una_base_str = una_base_str_val
 
 
+def load_repo_una(repo_dir, una_file_name="una.py"):
+    """Dynamically load the specified una file from the repo directory."""
+    una_file = Path(repo_dir) / una_file_name
+    if not una_file.exists():
+        colors.error(
+            f"Error: {una_file} not found. Build script is missing for this component."
+        )
+        sys.exit(1)
+
+    unique_id = (
+        f"{Path(repo_dir).name}_{una_file_name.replace('/', '_').replace('.', '_')}"
+    )
+    module_name = f"repo_una_{unique_id}"
+
+    spec = importlib.util.spec_from_file_location(module_name, una_file)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+class StepRunner:
+    def __init__(self, arch, staging_dir, target_dir, bld_base, use_pipe_capture=False, curses_ui=None):
+        self.arch = arch
+        self.staging_dir = staging_dir
+        self.target_dir = target_dir
+        self.bld_base = bld_base
+        self.use_pipe_capture = use_pipe_capture
+        self.curses_ui = curses_ui
+        self.component_snapshots = {}
+        self.cleaned_components = set()
+        self.build_logs_dir = self.bld_base / "build_logs"
+        self.build_logs_dir.mkdir(parents=True, exist_ok=True)
+
+    def run_step(self, cfg, step_name, step_func, **kwargs):
+        name = cfg["name"]
+        colors.info(f"[{self.arch}] Running {name}::{step_name}...")
+        if is_enabled():
+            build_step_start(self.arch, name, step_name)
+
+        if name not in self.cleaned_components:
+            report_file = self.bld_base / "report" / f"{name}.txt"
+            if report_file.exists():
+                colors.info(
+                    f"[{self.arch}] Cleaning up previous build outputs for {name}..."
+                )
+                paths = get_report_paths(report_file)
+                for p in paths:
+                    try:
+                        if p.startswith("staging/"):
+                            (self.staging_dir / p[8:]).unlink(missing_ok=True)
+                        elif p.startswith("target/"):
+                            (self.target_dir / p[7:]).unlink(missing_ok=True)
+                    except Exception as e:
+                        colors.warn(f"[{self.arch}] Warning: Failed to remove {p}: {e}")
+
+            self.component_snapshots[name] = {
+                "staging": take_snapshot(self.staging_dir),
+                "target": take_snapshot(self.target_dir),
+            }
+            self.cleaned_components.add(name)
+
+        log_file_path = self.build_logs_dir / f"{name}.txt"
+        colors.info(f"[{self.arch}] Build log: {log_file_path}")
+
+        if self.curses_ui:
+            try:
+                kind = 'tools' if cfg.get('type') == 'tools' else (getattr(self, 'arch', '') or '')
+                phase = None
+                if isinstance(step_name, str):
+                    lname = step_name.lower()
+                    if 'configure' in lname:
+                        phase = 'configure'
+                    elif 'install' in lname:
+                        phase = 'install'
+                    elif 'build' in lname:
+                        phase = 'build'
+                if not phase:
+                    phase = str(step_name)
+                parts = [p for p in (kind, name, phase) if p]
+                label = " ".join(parts)
+                try:
+                    self.curses_ui.set_status(label)
+                except Exception:
+                    pass
+                try:
+                    self.curses_ui.set_current_log(str(log_file_path))
+                except Exception:
+                    pass
+            except Exception:
+                try:
+                    self.curses_ui.set_current_log(str(log_file_path))
+                except Exception:
+                    pass
+
+        original_stdout_fd = os.dup(1)
+        original_stderr_fd = os.dup(2)
+        old_sys_stdout = sys.stdout
+        old_sys_stderr = sys.stderr
+
+        trace_file_open(str(log_file_path), "a")
+        try:
+            log_file = open(log_file_path, "a")
+        except Exception as e:
+            trace_exception(f"open({log_file_path})", e)
+            raise
+
+        original_stdout_is_tty = old_sys_stdout.isatty() if hasattr(old_sys_stdout, 'isatty') else False
+        use_pipe_capture = self.use_pipe_capture and not original_stdout_is_tty
+
+        pipe_read, pipe_write = None, None
+        async_top_writer = None
+        async_file_writer = None
+        pipe_read_fd = None
+        pipe_write_fd = None
+        tee_thread = None
+
+        if use_pipe_capture:
+            pipe_read, pipe_write = os.pipe()
+            try:
+                os.set_inheritable(pipe_read, False)
+            except Exception:
+                pass
+            try:
+                os.set_inheritable(pipe_write, False)
+            except Exception:
+                pass
+
+            os.dup2(pipe_write, 1)
+            os.dup2(pipe_write, 2)
+            try:
+                os.set_inheritable(1, True)
+                os.set_inheritable(2, True)
+            except Exception:
+                pass
+            try:
+                os.close(pipe_write)
+            except Exception:
+                pass
+
+            try:
+                try:
+                    fds = sorted(os.listdir('/proc/self/fd'))
+                except Exception:
+                    fds = []
+                if hasattr(log_file, 'write'):
+                    try:
+                        log_file.write(f"DEBUG_FDS_AFTER_DUP: {fds}\n")
+                        log_file.flush()
+                        try:
+                            os.fsync(log_file.fileno())
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            try:
+                class AsyncLogWriter:
+                    def __init__(self, logfile, write_to_top=True, top_queue=None):
+                        self.logfile = logfile
+                        self.write_to_top = bool(write_to_top)
+                        self.top_queue = top_queue
+                        self.q = queue.Queue()
+                        self.thread = threading.Thread(target=self._run, daemon=True)
+                        self.thread.start()
+                    def _run(self):
+                        while True:
+                            try:
+                                item = self.q.get()
+                            except Exception:
+                                continue
+                            if item is None:
+                                break
+                            text = item
+                            if isinstance(text, str):
+                                text = text.replace('\r', '')
+                            try:
+                                if hasattr(self.logfile, 'write'):
+                                    clean_text = strip_ansi_codes(text)
+                                    self.logfile.write(clean_text)
+                                    try:
+                                        self.logfile.flush()
+                                        try:
+                                            os.fsync(self.logfile.fileno())
+                                        except Exception:
+                                            pass
+                                    except Exception:
+                                        pass
+                            except Exception:
+                                pass
+                            if self.write_to_top and self.top_queue is not None:
+                                try:
+                                    self.top_queue.put(text)
+                                except Exception:
+                                    pass
+                            try:
+                                self.q.task_done()
+                            except Exception:
+                                pass
+                        try:
+                            if hasattr(self.logfile, 'flush'):
+                                self.logfile.flush()
+                        except Exception:
+                            pass
+                    def put(self, txt):
+                        try:
+                            self.q.put(txt)
+                        except Exception:
+                            pass
+                    def flush(self):
+                        try:
+                            self.q.join()
+                        except Exception:
+                            pass
+                    def stop(self):
+                        try:
+                            self.q.put(None)
+                            self.thread.join(timeout=5)
+                        except Exception:
+                            pass
+
+                async_top_writer = AsyncLogWriter(log_file, write_to_top=True, top_queue=(self.curses_ui.top_queue if self.curses_ui else None))
+                async_file_writer = AsyncLogWriter(log_file, write_to_top=False, top_queue=None)
+
+                class StdoutReplacer:
+                    def __init__(self, aw):
+                        self.aw = aw
+                    def write(self, txt):
+                        try:
+                            if isinstance(txt, str):
+                                txt = txt.replace('\r', '')
+                            self.aw.put(txt)
+                        except Exception:
+                            pass
+                        return len(txt)
+                    def flush(self):
+                        try:
+                            self.aw.flush()
+                        except Exception:
+                            pass
+                    def isatty(self):
+                        return False
+
+                sys.stdout = StdoutReplacer(async_top_writer)
+                sys.stderr = sys.stdout
+            except Exception:
+                pass
+
+        output_buffer = []
+        buffer_lock = threading.Lock()
+        stop_event = threading.Event()
+        reader = None
+
+        if use_pipe_capture and pipe_read is not None:
+            def reader_thread():
+                try:
+                    while True:
+                        try:
+                            data = os.read(pipe_read, 4096)
+                        except (OSError, IOError):
+                            break
+                        if not data:
+                            break
+                        text = data.decode('utf-8', errors='replace')
+                        try:
+                            if async_file_writer:
+                                async_file_writer.put(text)
+                        except Exception:
+                            pass
+                        with buffer_lock:
+                            output_buffer.append(data)
+                finally:
+                    try:
+                        while True:
+                            data = os.read(pipe_read, 4096)
+                            if not data:
+                                break
+                            text = data.decode('utf-8', errors='replace')
+                            try:
+                                if async_file_writer:
+                                    async_file_writer.put(text)
+                            except Exception:
+                                pass
+                            with buffer_lock:
+                                output_buffer.append(data)
+                    except Exception:
+                        pass
+
+            reader = threading.Thread(target=reader_thread, daemon=False)
+            reader.start()
+        else:
+            pipe_read_fd, pipe_write_fd = os.pipe()
+            try:
+                os.set_inheritable(pipe_read_fd, False)
+            except Exception:
+                pass
+            try:
+                os.set_inheritable(pipe_write_fd, False)
+            except Exception:
+                pass
+            os.dup2(pipe_write_fd, 1)
+            os.dup2(pipe_write_fd, 2)
+            try:
+                os.set_inheritable(1, True)
+                os.set_inheritable(2, True)
+            except Exception:
+                pass
+            try:
+                os.close(pipe_write_fd)
+            except Exception:
+                pass
+
+            def _tee_thread():
+                import time
+                try:
+                    while True:
+                        ready, _, _ = select.select([pipe_read_fd], [], [], 0.5)
+                        if ready:
+                            data = os.read(pipe_read_fd, 4096)
+                            if not data:
+                                break
+                            os.write(original_stdout_fd, data)
+                            log_file.write(data.decode(errors="replace"))
+                            log_file.flush()
+                        time.sleep(0.01)
+                except Exception:
+                    pass
+
+            tee_thread = threading.Thread(target=_tee_thread, daemon=True)
+            tee_thread.start()
+
+        try:
+            step_func(self.staging_dir, self.target_dir, **kwargs)
+        finally:
+            if use_pipe_capture:
+                stop_event.set()
+                try:
+                    os.close(pipe_write)
+                except Exception:
+                    pass
+                try:
+                    os.dup2(original_stdout_fd, 1)
+                    os.dup2(original_stderr_fd, 2)
+                except Exception:
+                    pass
+                if reader:
+                    try:
+                        reader.join()
+                    except Exception:
+                        pass
+            else:
+                try:
+                    if pipe_write_fd is not None:
+                        os.close(pipe_write_fd)
+                except Exception:
+                    pass
+                try:
+                    if tee_thread is not None:
+                        tee_thread.join(timeout=2)
+                except Exception:
+                    pass
+
+            try:
+                os.dup2(original_stdout_fd, 1)
+                os.dup2(original_stderr_fd, 2)
+            except Exception:
+                pass
+
+            try:
+                if 'old_sys_stdout' in locals() and old_sys_stdout is not None:
+                    sys.stdout = old_sys_stdout
+                if 'old_sys_stderr' in locals() and old_sys_stderr is not None:
+                    sys.stderr = old_sys_stderr
+            except Exception:
+                pass
+
+            try:
+                os.close(original_stdout_fd)
+            except Exception:
+                pass
+            try:
+                os.close(original_stderr_fd)
+            except Exception:
+                pass
+            if use_pipe_capture:
+                if pipe_read is not None:
+                    try:
+                        os.close(pipe_read)
+                    except Exception:
+                        pass
+                if pipe_write is not None:
+                    try:
+                        os.close(pipe_write)
+                    except Exception:
+                        pass
+            if async_top_writer:
+                try:
+                    async_top_writer.stop()
+                except Exception:
+                    pass
+            if async_file_writer:
+                try:
+                    async_file_writer.stop()
+                except Exception:
+                    pass
+
+            try:
+                trace_file_close(str(log_file_path))
+                log_file.close()
+            except Exception as e:
+                trace_exception(f"close({log_file_path})", e)
+                pass
+
+        pre = self.component_snapshots[name]
+        post_staging = take_snapshot(self.staging_dir)
+        post_target = take_snapshot(self.target_dir)
+
+        added_s, mod_s, del_s = compare_snapshots(pre["staging"], post_staging)
+        added_t, mod_t, del_t = compare_snapshots(pre["target"], post_target)
+
+        if mod_s or del_s:
+            colors.error(
+                f"[{self.arch}] ERROR: {name} modified or deleted files in staging!"
+            )
+        if mod_t or del_t:
+            colors.error(
+                f"[{self.arch}] ERROR: {name} modified or deleted files in target!"
+            )
+
+        combined_added = {f"staging/{k}": v for k, v in added_s.items()}
+        combined_added.update({f"target/{k}": v for k, v in added_t.items()})
+
+        combined_mod = {f"staging/{k}": v for k, v in mod_s.items()}
+        combined_mod.update({f"target/{k}": v for k, v in mod_t.items()})
+
+        combined_del = {f"staging/{k}": v for k, v in del_s.items()}
+        combined_del.update({f"target/{k}": v for k, v in del_t.items()})
+
+        report_file = self.bld_base / "build_product" / f"{name}.txt"
+        write_report(combined_added, combined_mod, combined_del, report_file)
+
+        if is_enabled():
+            build_step_end(self.arch, name, step_name)
+
+
+def propagate_skel(staging_dir, target_dir):
+    """Skel propagation using original file-by-file method + snapshot verification"""
+    global skel_dir
+
+    colors.info("Propagating skeleton (original method)...")
+    for dest in [staging_dir, target_dir]:
+        for item in os.listdir(skel_dir):
+            s_item = skel_dir / item
+            d_item = dest / item
+
+            if (
+                d_item.exists()
+                and s_item.is_symlink()
+                and d_item.is_dir()
+                and not d_item.is_symlink()
+            ):
+                colors.warn(
+                    f"Removing conflicting directory {d_item} to preserve skel symlink."
+                )
+                shutil.rmtree(d_item)
+
+        subprocess.run(
+            ["cp", "-a", "--remove-destination", f"{skel_dir}/.", str(dest)], check=True
+        )
+
+
 def _run_sync_phase():
     """Run git sync for all repos inside the curses UI."""
-    if not sync_repo_func or not repos_config_all or not repos_to_sync_set:
+    if not repos_config_all or not repos_to_sync_set:
         return
 
     colors.info("\n--- Git Sync Stage ---")
@@ -244,23 +699,22 @@ def _run_sync_phase():
         name = cfg["name"]
         git_log_file = git_logs_dir / f"{name}_git_pre.txt"
 
-        # Update curses UI: repo name in separator, git log in bottom pane
         if curses_ui:
             curses_ui.set_status(name)
             curses_ui.set_current_log(str(git_log_file))
 
         colors.info(f">>> Syncing repo: {name}")
+        from mods.git_ops import sync_repo
+        from mods.config import save_repo_state
 
-        # Redirect FD-level stdout/stderr to log file (captures git subprocess output)
-        # Python-level sys.stdout (curses Writer) is unaffected -> status stays in top pane
         original_stdout_fd = os.dup(1)
         original_stderr_fd = os.dup(2)
         try:
             with open(git_log_file, "w") as f:
                 os.dup2(f.fileno(), 1)
                 os.dup2(f.fileno(), 2)
-                if sync_repo_func(cfg, una_base_str):
-                    save_repo_state_func(cfg)
+                if sync_repo(cfg, una_base_str):
+                    save_repo_state(cfg)
         finally:
             os.dup2(original_stdout_fd, 1)
             os.dup2(original_stderr_fd, 2)
@@ -268,7 +722,6 @@ def _run_sync_phase():
             os.close(original_stderr_fd)
 
     colors.info("Git sync complete.")
-    # Reset separator for build phase
     if curses_ui:
         curses_ui.set_status("Build")
 

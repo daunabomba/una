@@ -317,6 +317,35 @@ def save_repo_state(cfg: dict):
         json.dump(serializable, f, indent=4)
 
 
+def list_repos(repos, target_type=None):
+    """
+    Helper function to filter and print repo directories by type.
+    If target_type is None, prints all.
+    """
+    if target_type == "target":
+        filtered = [
+            r
+            for r in repos
+            if r.get("type") != "tools"
+            and not r.get("is_virtual")
+            and r.get("type") != "virtual"
+        ]
+    else:
+        filtered = [
+            r
+            for r in repos
+            if (target_type is None or r.get("type") == target_type)
+            and not r.get("is_virtual")
+            and r.get("type") != "virtual"
+        ]
+    for r in filtered:
+        script_info = f" (Script: {r.get('una_file', 'una.py')})"
+        print(
+            f"[{r.get('type', 'unknown')}] {r['name']} -> {r['repo_dir']}{script_info}"
+        )
+    return [r["name"] for r in filtered]
+
+
 def scan_repos(repo_base: Path = None):
     """Scans the repo/ directory for existing repositories and their states."""
     global BASE_DIR
