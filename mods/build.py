@@ -7,7 +7,7 @@ import json
 import os
 import queue
 import re
-import select
+
 import shutil
 import subprocess
 import sys
@@ -476,8 +476,8 @@ class StepRunner:
                             break
                         text = data.decode('utf-8', errors='replace')
                         try:
-                            if async_file_writer:
-                                async_file_writer.put(text)
+                            if async_top_writer:
+                                async_top_writer.put(text)
                         except Exception:
                             pass
                         with buffer_lock:
@@ -490,8 +490,8 @@ class StepRunner:
                                 break
                             text = data.decode('utf-8', errors='replace')
                             try:
-                                if async_file_writer:
-                                    async_file_writer.put(text)
+                                if async_top_writer:
+                                    async_top_writer.put(text)
                             except Exception:
                                 pass
                             with buffer_lock:
@@ -524,18 +524,14 @@ class StepRunner:
                 pass
 
             def _tee_thread():
-                import time
                 try:
                     while True:
-                        ready, _, _ = select.select([pipe_read_fd], [], [], 0.5)
-                        if ready:
-                            data = os.read(pipe_read_fd, 4096)
-                            if not data:
-                                break
-                            os.write(original_stdout_fd, data)
-                            log_file.write(data.decode(errors="replace"))
-                            log_file.flush()
-                        time.sleep(0.01)
+                        data = os.read(pipe_read_fd, 4096)
+                        if not data:
+                            break
+                        os.write(original_stdout_fd, data)
+                        log_file.write(data.decode(errors="replace"))
+                        log_file.flush()
                 except Exception:
                     pass
 

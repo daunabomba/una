@@ -269,7 +269,6 @@ class CursesUI:
         self.stdscr = stdscr
         curses.noecho()
         curses.cbreak()
-        stdscr.keypad(True)
         # Clear the screen to remove any prior terminal output and avoid overlap
         try:
             stdscr.clear()
@@ -347,14 +346,7 @@ class CursesUI:
 
         self.running = True
 
-        # Make getch() non-blocking so the UI loop doesn't freeze waiting for input
-        try:
-            stdscr.timeout(50)
-        except Exception:
-            pass
-
-        # Close stdin to prevent curses/subprocesses from blocking on terminal input
-        # Pipes and subprocesses spawned during build should not inherit terminal stdin
+        # Close stdin so no subprocess inherits a terminal stdin
         try:
             devnull_fd = os.open(os.devnull, os.O_RDONLY)
             os.dup2(devnull_fd, 0)
@@ -382,49 +374,32 @@ class CursesUI:
                     self.build_result = self.build_func(*args_tuple, **kwargs_dict)
                 except Exception as e:
                     self.build_result = False
+                finally:
+                    try:
+                        self.top_queue.put(None)
+                    except Exception:
+                        pass
             self.build_thread = threading.Thread(
                 target=run_build_and_capture, daemon=True
             )
             self.build_thread.start()
 
-        # Wait for build to complete or user presses 'q'
-        try:
-            if self.build_thread:
-                while self.build_thread.is_alive():
-                    # Drain any pending top-pane output from background writers in UI thread
+        # Wait for build to complete without polling
+        if self.build_thread:
+            while True:
+                try:
+                    item = self.top_queue.get()
+                except Exception:
+                    break
+                if item is None:
+                    break
+                if hasattr(self, "writer") and item is not None:
+                    self.writer.write(item)
                     try:
-                        while True:
-                            item = self.top_queue.get_nowait()
-                            try:
-                                if hasattr(self, "writer") and item is not None:
-                                    self.writer.write(item)
-                                    try:
-                                        self.writer.flush()
-                                    except Exception:
-                                        pass
-                            except Exception:
-                                pass
-                    except queue.Empty:
-                        pass
-                    ch = stdscr.getch()
-                    if ch == ord("q"):
-                        break
-                    time.sleep(0.05)
-        except Exception:
-            pass
-        finally:
-            # Drain remaining top_queue items before closing
-            try:
-                while True:
-                    item = self.top_queue.get_nowait()
-                    try:
-                        if hasattr(self, "writer") and item is not None:
-                            self.writer.write(item)
+                        self.writer.flush()
                     except Exception:
                         pass
-            except queue.Empty:
-                pass
-            self.close()
+        self.close()
 
     def set_current_log(self, log_path):
         """Notify watcher of the current log file being built and update status with basename."""
