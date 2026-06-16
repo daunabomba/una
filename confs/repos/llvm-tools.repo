@@ -4,5 +4,5 @@ repo_dir = repo/llvm
 una_file = una/tools.py
 origin_url = llvm-project.git
 type = tools
-tag = llvmorg-22.1.7
+tag = llvmorg-22.1.8
 sparse_ignore_dirs = flang, flang-rt
