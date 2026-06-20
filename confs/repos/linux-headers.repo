@@ -5,5 +5,5 @@ una_file = una/headers.py
 origin_url = linux-stable.git
 depends = build-tools
 type = target
-tag = v7.1
+tag = v7.1.1
 sparse_ignore_dirs = Documentation, arch/arm/boot/dts, arch/arm64/boot/dts
