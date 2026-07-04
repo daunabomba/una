@@ -4,4 +4,4 @@ repo_dir = repo/dropbear
 origin_url = dropbear.git
 type = target
 depends = musl
-tag = DROPBEAR_2025.89
+tag = DROPBEAR_2026.91
