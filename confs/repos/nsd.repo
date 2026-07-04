@@ -2,6 +2,6 @@
 una_repo = nsd.git
 repo_dir = repo/nsd
 origin_url = nsd.git
-tag = NSD_4_14_2_REL
+tag = NSD_4_14_3_REL
 depends = musl openssl
 type = target
