@@ -3,5 +3,5 @@ una_repo = openssl.git
 repo_dir = repo/openssl
 origin_url = openssl.git
 depends = musl
-tag = openssl-4.0.0
+tag = openssl-4.0.1
 type = target
