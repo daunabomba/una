@@ -236,8 +236,8 @@ class CursesUI:
         self.h = 0
         self.w = 0
         self.running = False
-        self.top_lock = threading.Lock()
-        self.bottom_lock = threading.Lock()
+        self.top_lock = threading.RLock()   # guards self.top window AND stdscr separator
+        self.bottom_lock = threading.RLock()  # guards self.bottom window
         self.old_stdout = None
         self.old_stderr = None
         self.log_thread = None
@@ -384,7 +384,7 @@ class CursesUI:
             )
             self.build_thread.start()
 
-        # Wait for build to complete without polling
+        # Wait for build to complete, forwarding queued text to the Writer
         if self.build_thread:
             while True:
                 try:
@@ -393,9 +393,12 @@ class CursesUI:
                     break
                 if item is None:
                     break
+                # Render any text items pushed by AsyncLogWriter into the
+                # top pane.  Previously these were silently discarded,
+                # causing a memory leak and a blank top pane.
                 if hasattr(self, "writer") and item is not None:
-                    self.writer.write(item)
                     try:
+                        self.writer.write(item)
                         self.writer.flush()
                     except Exception:
                         pass
@@ -414,24 +417,20 @@ class CursesUI:
         except Exception:
             pass
 
-    def set_status(self, text):
-        """Update the middle separator line with a status label (e.g. repo name).
+    def _draw_separator(self, text=None):
+        """Redraw the middle separator line. Thread-safe via top_lock.
 
-        The separator is a single solid line across the screen with the provided
-        text centered: "<kind> <repo> <phase>". Stores the last text in
-        self.separator_text so background watchers can redraw it without calling
-        set_status (avoids lock re-entrancy).
+        Uses the same lock as Writer.write() to prevent concurrent curses
+        writes to stdscr and its subwindow self.top.
+
+        If *text* is None, redraws using the current self.separator_text.
         """
         try:
             with self.top_lock:
                 if self.stdscr is None:
                     return
-                # store for watchers
-                try:
+                if text is not None:
                     self.separator_text = str(text)
-                except Exception:
-                    self.separator_text = ""
-                # Build the separator: ─── text ───
                 label = f" {self.separator_text} "
                 total = self.w
                 left_pad = max(0, (total - len(label)) // 2)
@@ -444,6 +443,16 @@ class CursesUI:
                     pass
         except Exception:
             pass
+
+    def set_status(self, text):
+        """Update the middle separator line with a status label (e.g. repo name).
+
+        The separator is a single solid line across the screen with the provided
+        text centered: "<kind> <repo> <phase>". Stores the last text in
+        self.separator_text so background watchers can redraw it without calling
+        set_status (avoids lock re-entrancy).
+        """
+        self._draw_separator(text)
 
     def _start_watcher(self):
         """Watch log files and display content in bottom pane."""
@@ -550,35 +559,14 @@ class CursesUI:
                                         # keep most recent content_h lines
                                         bottom_buffer = bottom_buffer[-content_h:]
 
-                                # Ensure separator and bottom header are redrawn to avoid corruption
+                                # Redraw separator via locked helper (uses top_lock, same as Writer)
                                 try:
-                                    # Prefer separator_text if set by set_status(), fallback to stem
-                                    sep_text = self.separator_text if getattr(self, 'separator_text', None) else (Path(current_log_file).stem if current_log_file else "...")
-                                    # Draw middle separator directly (avoid calling set_status which would re-acquire lock)
-                                    try:
-                                        label = f" {sep_text} "
-                                        total = self.w
-                                        left_pad = max(0, (total - len(label)) // 2)
-                                        right_pad = max(0, total - left_pad - len(label))
-                                        sep_line = "─" * left_pad + label + "─" * right_pad
-                                        if self.stdscr is not None:
-                                            try:
-                                                self.stdscr.addstr(self.sep_row, 0, sep_line[:total], curses.A_BOLD)
-                                            except Exception:
-                                                pass
-                                    except Exception:
-                                        pass
-                                    # redraw bottom header
-                                    try:
-                                        # No bottom header to avoid corrupting content; ensure row 0 is cleared
-                                        bot_h, bot_w = self.bottom.getmaxyx()
-                                        try:
-                                            self.bottom.move(0, 0)
-                                            self.bottom.clrtoeol()
-                                        except Exception:
-                                            pass
-                                    except Exception:
-                                        pass
+                                    sep_text = (
+                                        self.separator_text
+                                        if getattr(self, 'separator_text', None)
+                                        else (Path(current_log_file).stem if current_log_file else "...")
+                                    )
+                                    self._draw_separator(sep_text)
                                 except Exception:
                                     pass
 
@@ -607,12 +595,7 @@ class CursesUI:
                                     except Exception:
                                         pass
 
-                                # Refresh stdscr separator then bottom window
-                                try:
-                                    if self.stdscr:
-                                        self.stdscr.refresh()
-                                except Exception:
-                                    pass
+                                # Refresh bottom window
                                 try:
                                     self.bottom.refresh()
                                 except Exception:
@@ -630,9 +613,14 @@ class CursesUI:
         """Restore terminal."""
         self.running = False
 
+        # Give the watcher thread time to exit its sleep/curses call
+        # before we tear down curses.  A short timeout is not enough
+        # when the watcher is mid-sleep (50 ms loop) or mid-curses-call.
         if self.log_thread:
-            self.log_thread.join(timeout=1)
+            self.log_thread.join(timeout=3)
 
+        # Restore stdout/stderr before curses cleanup so that any
+        # deferred writes do not hit a dead curses window.
         if self.old_stdout:
             sys.stdout = self.old_stdout
         if self.old_stderr:

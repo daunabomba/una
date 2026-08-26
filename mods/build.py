@@ -61,6 +61,99 @@ repos_to_sync_set = None
 una_base_str = None
 
 
+class AsyncLogWriter:
+    """Thread-safe async writer that forwards text to a log file and optionally
+    to a curses top_queue for display in the top pane."""
+
+    def __init__(self, logfile, write_to_top=True, top_queue=None):
+        self.logfile = logfile
+        self.write_to_top = bool(write_to_top)
+        self.top_queue = top_queue
+        self.q = queue.Queue()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def _run(self):
+        while True:
+            try:
+                item = self.q.get()
+            except Exception:
+                continue
+            if item is None:
+                break
+            text = item
+            if isinstance(text, str):
+                text = text.replace('\r', '')
+            try:
+                if hasattr(self.logfile, 'write'):
+                    clean_text = strip_ansi_codes(text)
+                    self.logfile.write(clean_text)
+                    try:
+                        self.logfile.flush()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            if self.write_to_top and self.top_queue is not None:
+                try:
+                    self.top_queue.put(text)
+                except Exception:
+                    pass
+            try:
+                self.q.task_done()
+            except Exception:
+                pass
+        try:
+            if hasattr(self.logfile, 'flush'):
+                self.logfile.flush()
+        except Exception:
+            pass
+
+    def put(self, txt):
+        try:
+            self.q.put(txt)
+        except Exception:
+            pass
+
+    def flush(self):
+        try:
+            self.q.join()
+        except Exception:
+            pass
+
+    def stop(self):
+        try:
+            self.q.put(None)
+            self.thread.join(timeout=5)
+        except Exception:
+            pass
+
+
+class StdoutReplacer:
+    """File-like wrapper that funnels writes through an AsyncLogWriter."""
+
+    def __init__(self, aw):
+        self.aw = aw
+
+    def write(self, txt):
+        try:
+            if isinstance(txt, str):
+                txt = txt.replace('\r', '')
+            self.aw.put(txt)
+        except Exception:
+            pass
+        return len(txt)
+
+    def flush(self):
+        try:
+            self.aw.flush()
+        except Exception:
+            pass
+
+    def isatty(self):
+        return False
+
+
 def get_build_env(staging_dir=None):
     """Get environment for build subprocesses with tools/bin in PATH.
     
@@ -372,87 +465,9 @@ class StepRunner:
                 pass
 
             try:
-                class AsyncLogWriter:
-                    def __init__(self, logfile, write_to_top=True, top_queue=None):
-                        self.logfile = logfile
-                        self.write_to_top = bool(write_to_top)
-                        self.top_queue = top_queue
-                        self.q = queue.Queue()
-                        self.thread = threading.Thread(target=self._run, daemon=True)
-                        self.thread.start()
-                    def _run(self):
-                        while True:
-                            try:
-                                item = self.q.get()
-                            except Exception:
-                                continue
-                            if item is None:
-                                break
-                            text = item
-                            if isinstance(text, str):
-                                text = text.replace('\r', '')
-                            try:
-                                if hasattr(self.logfile, 'write'):
-                                    clean_text = strip_ansi_codes(text)
-                                    self.logfile.write(clean_text)
-                                    try:
-                                        self.logfile.flush()
-                                    except Exception:
-                                        pass
-                            except Exception:
-                                pass
-                            if self.write_to_top and self.top_queue is not None:
-                                try:
-                                    self.top_queue.put(text)
-                                except Exception:
-                                    pass
-                            try:
-                                self.q.task_done()
-                            except Exception:
-                                pass
-                        try:
-                            if hasattr(self.logfile, 'flush'):
-                                self.logfile.flush()
-                        except Exception:
-                            pass
-                    def put(self, txt):
-                        try:
-                            self.q.put(txt)
-                        except Exception:
-                            pass
-                    def flush(self):
-                        try:
-                            self.q.join()
-                        except Exception:
-                            pass
-                    def stop(self):
-                        try:
-                            self.q.put(None)
-                            self.thread.join(timeout=5)
-                        except Exception:
-                            pass
-
-                async_top_writer = AsyncLogWriter(log_file, write_to_top=True, top_queue=(self.curses_ui.top_queue if self.curses_ui else None))
+                top_q = self.curses_ui.top_queue if self.curses_ui else None
+                async_top_writer = AsyncLogWriter(log_file, write_to_top=True, top_queue=top_q)
                 async_file_writer = AsyncLogWriter(log_file, write_to_top=False, top_queue=None)
-
-                class StdoutReplacer:
-                    def __init__(self, aw):
-                        self.aw = aw
-                    def write(self, txt):
-                        try:
-                            if isinstance(txt, str):
-                                txt = txt.replace('\r', '')
-                            self.aw.put(txt)
-                        except Exception:
-                            pass
-                        return len(txt)
-                    def flush(self):
-                        try:
-                            self.aw.flush()
-                        except Exception:
-                            pass
-                    def isatty(self):
-                        return False
 
                 sys.stdout = StdoutReplacer(async_top_writer)
                 sys.stderr = sys.stdout
@@ -865,91 +880,10 @@ def run_build(args):
                         os.close(pipe_write)
                     except Exception:
                         pass
+                    pipe_write = None  # prevent double-close in finally
 
-                    class AsyncLogWriter:
-                        def __init__(self, logfile, write_to_top=True, top_queue=None):
-                            self.logfile = logfile
-                            self.write_to_top = bool(write_to_top)
-                            self.top_queue = top_queue
-                            self.q = queue.Queue()
-                            self.thread = threading.Thread(target=self._run, daemon=True)
-                            self.thread.start()
-
-                        def _run(self):
-                            while True:
-                                try:
-                                    item = self.q.get()
-                                except Exception:
-                                    continue
-                                if item is None:
-                                    break
-                                text = item
-                                if isinstance(text, str):
-                                    text = text.replace('\r', '')
-                                try:
-                                    if hasattr(self.logfile, 'write'):
-                                        clean_text = strip_ansi_codes(text)
-                                        self.logfile.write(clean_text)
-                                        try:
-                                            self.logfile.flush()
-                                        except Exception:
-                                            pass
-                                except Exception:
-                                    pass
-                                if self.write_to_top and self.top_queue is not None:
-                                    try:
-                                        self.top_queue.put(text)
-                                    except Exception:
-                                        pass
-                                try:
-                                    self.q.task_done()
-                                except Exception:
-                                    pass
-                            try:
-                                if hasattr(self.logfile, 'flush'):
-                                    self.logfile.flush()
-                            except Exception:
-                                pass
-
-                        def put(self, txt):
-                            try:
-                                self.q.put(txt)
-                            except Exception:
-                                pass
-
-                        def flush(self):
-                            try:
-                                self.q.join()
-                            except Exception:
-                                pass
-
-                        def stop(self):
-                            try:
-                                self.q.put(None)
-                                self.thread.join(timeout=5)
-                            except Exception:
-                                pass
-
-                    async_writer = AsyncLogWriter(log_file, write_to_top=True, top_queue=(curses_ui.top_queue if curses_ui else None))
-
-                    class StdoutReplacer:
-                        def __init__(self, aw):
-                            self.aw = aw
-                        def write(self, txt):
-                            try:
-                                if isinstance(txt, str):
-                                    txt = txt.replace('\r', '')
-                                self.aw.put(txt)
-                            except Exception:
-                                pass
-                            return len(txt)
-                        def flush(self):
-                            try:
-                                self.aw.flush()
-                            except Exception:
-                                pass
-                        def isatty(self):
-                            return False
+                    top_q = curses_ui.top_queue if curses_ui else None
+                    async_writer = AsyncLogWriter(log_file, write_to_top=True, top_queue=top_q)
 
                     sys.stdout = StdoutReplacer(async_writer)
                     sys.stderr = sys.stdout
@@ -974,12 +908,12 @@ def run_build(args):
                     if hasattr(module, "tools_install"):
                         module.tools_install(tools_install_dir)
 
-                    try:
-                        os.close(pipe_write)
-                    except Exception:
-                        pass
                     if reader:
                         reader.join(timeout=2)
+                    # Restore stdout BEFORE stopping async_writer so any
+                    # deferred prints go to the real Writer, not a dead queue.
+                    sys.stdout = old_sys_stdout
+                    sys.stderr = old_sys_stderr
                     if async_writer:
                         async_writer.stop()
                 else:
@@ -1025,15 +959,22 @@ def run_build(args):
                     if hasattr(module, "tools_install"):
                         module.tools_install(tools_install_dir)
             finally:
-                if not use_curses and pipe_write is not None:
-                    try:
-                        os.close(pipe_write)
-                    except Exception:
-                        pass
-                os.dup2(original_stdout_fd, 1)
-                os.dup2(original_stderr_fd, 2)
-                os.close(original_stdout_fd)
-                os.close(original_stderr_fd)
+                # Restore file descriptors
+                try:
+                    os.dup2(original_stdout_fd, 1)
+                    os.dup2(original_stderr_fd, 2)
+                except Exception:
+                    pass
+                try:
+                    os.close(original_stdout_fd)
+                except Exception:
+                    pass
+                try:
+                    os.close(original_stderr_fd)
+                except Exception:
+                    pass
+                # Restore Python stdout/stderr BEFORE stopping async_writer
+                # so any final prints go to the real Writer, not a dead queue.
                 sys.stdout = old_sys_stdout
                 sys.stderr = old_sys_stderr
                 if pipe_read is not None:
