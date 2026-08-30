@@ -17,6 +17,7 @@ from mods.utils import (
     TqdmProgress,
     init_or_reset_repo,
     is_repo_dirty,
+    find_newer_tag,
 )
 from mods.trace import is_enabled, repo_created, repo_synced, repo_removed
 from mods.snapshot import get_report_paths
@@ -180,7 +181,7 @@ def sync_repo(cfg: dict, una_base: str) -> bool:
 
     has_origin = "origin_url" in cfg
 
-    init_or_reset_repo(
+    repo = init_or_reset_repo(
         repo_dir=repo_dir,
         origin_url=cfg.get("origin_url"),
         una_url=una_url,
@@ -189,6 +190,19 @@ def sync_repo(cfg: dict, una_base: str) -> bool:
         reset=needs_reset,
         tag=cfg.get("tag"),
     )
+
+    configured_tag = cfg.get("tag")
+    if configured_tag and repo:
+        try:
+            repo_tags = [t.name for t in repo.tags]
+            newer_tag = find_newer_tag(repo_tags, configured_tag)
+            if newer_tag:
+                cfg["newer_tag"] = newer_tag
+                colors.warn(
+                    f"Notice: A newer version tag '{newer_tag}' is available for '{cfg['name']}' (configured: '{configured_tag}')"
+                )
+        except Exception as e:
+            colors.warn(f"Warning: Failed to check tags for '{cfg['name']}': {e}")
 
     if is_enabled():
         if needs_reset:
@@ -348,6 +362,29 @@ def _find_repo_file_with_tag(comp_name: str, base_dir: Path) -> Path:
     if not repos_dir.exists():
         return None
 
+    # Build a map: section_name -> (file_path, configparser_section)
+    section_map = {}
+    for repo_file in repos_dir.glob("*.repo"):
+        cp = configparser.ConfigParser()
+        cp.read(repo_file)
+        for section in cp.sections():
+            section_map[section] = (repo_file, dict(cp[section]))
+
+    # Follow the ref= chain from comp_name
+    visited = set()
+    current = comp_name
+    while current and current not in visited:
+        visited.add(current)
+        if current not in section_map:
+            break
+        file_path, fields = section_map[current]
+        if "tag" in fields:
+            return file_path
+        # Follow ref= if present
+        current = fields.get("ref")
+
+    return None
+
 
 def sync_kernel_config(src: Path, dest: Path):
     """
@@ -439,25 +476,3 @@ def remove_repo(name, repos, arches, bld_base):
     colors.info(f"Repository '{name}' removed successfully.")
     return True
 
-    # Build a map: section_name -> (file_path, configparser_section)
-    section_map = {}
-    for repo_file in repos_dir.glob("*.repo"):
-        cp = configparser.ConfigParser()
-        cp.read(repo_file)
-        for section in cp.sections():
-            section_map[section] = (repo_file, dict(cp[section]))
-
-    # Follow the ref= chain from comp_name
-    visited = set()
-    current = comp_name
-    while current and current not in visited:
-        visited.add(current)
-        if current not in section_map:
-            break
-        file_path, fields = section_map[current]
-        if "tag" in fields:
-            return file_path
-        # Follow ref= if present
-        current = fields.get("ref")
-
-    return None

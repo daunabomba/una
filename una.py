@@ -349,6 +349,11 @@ def main():
             os.close(original_stdout_fd)
             os.close(original_stderr_fd)
 
+        if cfg.get("newer_tag"):
+            colors.warn(
+                f"Notice: A newer version tag '{cfg['newer_tag']}' is available for '{cfg['name']}' (configured: '{cfg.get('tag')}')"
+            )
+
     valid_repo_dirs = keep_repo_dirs.copy()
     for cfg in repos_config:
         if cfg.get("is_virtual") or "repo_dir" not in cfg:

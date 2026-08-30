@@ -146,8 +146,13 @@ def init_or_reset_repo(
             )
 
         if reset:
-            colors.info(f">>> git fetch --prune origin")
-            repo.remotes.origin.fetch(progress=TqdmProgress(), prune=True)
+            colors.info(f">>> git fetch --tags --prune origin")
+            repo.remotes.origin.fetch(progress=TqdmProgress(), tags=True, prune=True)
+        else:
+            try:
+                repo.remotes.origin.fetch(progress=TqdmProgress(), tags=True)
+            except Exception:
+                pass
 
     # 2. Update Una Remote
     if remote_una_name not in [r.name for r in repo.remotes]:
@@ -179,6 +184,11 @@ def init_or_reset_repo(
             )
             colors.error(f"Git Error Details: {e}")
             sys.exit(1)
+    else:
+        try:
+            repo.remotes[remote_una_name].fetch(progress=TqdmProgress(), tags=True)
+        except Exception:
+            pass
 
     # 3. Sparse Checkout Management
     if sparse_ignore_dirs:
@@ -450,3 +460,132 @@ def strip_ansi_codes(text):
     """Remove ANSI escape sequences from text."""
     ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
     return ansi_escape.sub('', text)
+
+
+def parse_tag_version(tag_str: str) -> dict | None:
+    """
+    Parse a tag string using a heuristic into prefix, numeric version tuple, and suffix.
+    Handles tags with optional prefix text, delimiters (. _ -), varying number of
+    numeric components (1, 2, 3, 4+), and optional suffix text (e.g. _REL, -rc1, beta).
+    """
+    if not tag_str or not isinstance(tag_str, str):
+        return None
+
+    m = re.match(
+        r'^(?P<prefix>.*?)(?P<numbers>\d+(?:[\._\-]\d+)*)(?P<suffix>.*)$',
+        tag_str.strip(),
+    )
+    if not m:
+        return None
+
+    prefix = m.group('prefix')
+    nums_str = m.group('numbers')
+    suffix = m.group('suffix')
+
+    try:
+        nums = tuple(int(x) for x in re.split(r'[\._\-]', nums_str))
+    except ValueError:
+        return None
+
+    # Identify pre-release / non-stable suffixes
+    is_prerelease = bool(
+        re.search(
+            r'(?:^|[\._\-])(rc|alpha|beta|pre|test|dev|preview|draft|init)(?:\d*|$)',
+            suffix,
+            re.IGNORECASE,
+        )
+    )
+
+    prefix_norm = re.sub(r'[\-_]', '', prefix.lower())
+    suffix_norm = suffix.lower().strip()
+
+    return {
+        'tag': tag_str,
+        'prefix': prefix,
+        'prefix_norm': prefix_norm,
+        'nums': nums,
+        'suffix': suffix,
+        'suffix_norm': suffix_norm,
+        'is_prerelease': is_prerelease,
+    }
+
+
+def compare_version_tuples(v1_nums: tuple, v2_nums: tuple) -> int:
+    """
+    Compare two version number tuples.
+    Returns:
+       1 if v1 > v2
+      -1 if v1 < v2
+       0 if v1 == v2
+    Handles varying component lengths, e.g. (7, 3) vs (7, 2, 2) where 3 > 2.
+    """
+    for a, b in zip(v1_nums, v2_nums):
+        if a > b:
+            return 1
+        elif a < b:
+            return -1
+
+    if len(v1_nums) > len(v2_nums):
+        if any(x > 0 for x in v1_nums[len(v2_nums):]):
+            return 1
+        return 0
+    elif len(v2_nums) > len(v1_nums):
+        if any(x > 0 for x in v2_nums[len(v1_nums):]):
+            return -1
+        return 0
+
+    return 0
+
+
+def find_newer_tag(all_tags: list[str], current_tag: str) -> str | None:
+    """
+    Check all candidate tags against current_tag and return the most recent
+    newer version tag, or None if current_tag is already up-to-date or newer.
+    """
+    from functools import cmp_to_key
+
+    cur = parse_tag_version(current_tag)
+    if not cur:
+        return None
+
+    matching_candidates = []
+    for t in all_tags:
+        p = parse_tag_version(t)
+        if not p:
+            continue
+
+        # Prefix must match
+        if p['prefix_norm'] != cur['prefix_norm']:
+            continue
+
+        # Suffix matching heuristic:
+        if not cur['is_prerelease']:
+            if p['is_prerelease']:
+                continue
+            if cur['suffix_norm']:
+                if p['suffix_norm'] != cur['suffix_norm'] and p['suffix_norm'] != '':
+                    continue
+            else:
+                if p['suffix_norm']:
+                    continue
+
+        cmp = compare_version_tuples(p['nums'], cur['nums'])
+        if cmp > 0:
+            matching_candidates.append(p)
+
+    if not matching_candidates:
+        return None
+
+    def sort_key(a, b):
+        c = compare_version_tuples(a['nums'], b['nums'])
+        if c != 0:
+            return c
+        if a['is_prerelease'] and not b['is_prerelease']:
+            return -1
+        if not a['is_prerelease'] and b['is_prerelease']:
+            return 1
+        return 0
+
+    matching_candidates.sort(key=cmp_to_key(sort_key))
+    return matching_candidates[-1]['tag']
+

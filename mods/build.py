@@ -731,6 +731,11 @@ def _run_sync_phase():
             os.close(original_stdout_fd)
             os.close(original_stderr_fd)
 
+        if cfg.get("newer_tag"):
+            colors.warn(
+                f"Notice: A newer version tag '{cfg['newer_tag']}' is available for '{name}' (configured: '{cfg.get('tag')}')"
+            )
+
     colors.info("Git sync complete.")
     if curses_ui:
         curses_ui.set_status("Build")
