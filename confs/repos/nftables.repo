@@ -3,5 +3,5 @@ una_repo = nftables.git
 repo_dir = repo/nftables
 origin_url = nftables.git
 depends = libnftnl
-tag = v1.1.6
+tag = v1.1.7
 type = target
