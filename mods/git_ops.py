@@ -153,7 +153,7 @@ def print_top_level_status(base_dir: Path):
     subprocess.run(["git", "status", "-sb"], cwd=base_dir)
 
 
-def sync_repo(cfg: dict, una_base: str) -> bool:
+def sync_repo(cfg: dict, una_base: str, base_dir: Path = None) -> bool:
     """
     Sync/initialize a single repository.
 
@@ -161,6 +161,9 @@ def sync_repo(cfg: dict, una_base: str) -> bool:
         True if repo was newly initialized, False otherwise
     """
     from pathlib import Path
+
+    if base_dir is None:
+        base_dir = Path(__file__).resolve().parent.parent
 
     repo_dir = Path(cfg["repo_dir"])
     needs_reset = not repo_dir.exists()
@@ -201,8 +204,13 @@ def sync_repo(cfg: dict, una_base: str) -> bool:
                 colors.warn(
                     f"Notice: A newer version tag '{newer_tag}' is available for '{cfg['name']}' (configured: '{configured_tag}')"
                 )
+                if auto_rebase_and_update_tag(
+                    cfg["name"], configured_tag, newer_tag, repo_dir, base_dir
+                ):
+                    cfg["tag"] = newer_tag
+                    cfg["rebased_new_tag"] = newer_tag
         except Exception as e:
-            colors.warn(f"Warning: Failed to check tags for '{cfg['name']}': {e}")
+            colors.warn(f"Warning: Failed to check/rebase tags for '{cfg['name']}': {e}")
 
     if is_enabled():
         if needs_reset:
@@ -213,26 +221,134 @@ def sync_repo(cfg: dict, una_base: str) -> bool:
     return needs_reset
 
 
+def auto_rebase_and_update_tag(
+    comp_name: str,
+    old_tag: str,
+    new_tag: str,
+    repo_dir: Path,
+    base_dir: Path = None,
+) -> bool:
+    """
+    Rebase a component's patches onto new_tag from old_tag, push with --force-with-lease,
+    update the .repo file on disk, and commit/push the top-level una repository update.
+    """
+    import re as _re
+    import subprocess
+
+    if base_dir is None:
+        base_dir = Path(__file__).resolve().parent.parent
+
+    repo = Repo(repo_dir)
+
+    print(f"\n--- Rebasing {comp_name}: {old_tag} -> {new_tag} ---")
+    print(f">>> git rebase --onto={new_tag} {old_tag}  (in {repo_dir})")
+    result = subprocess.run(
+        ["git", "rebase", f"--onto={new_tag}", old_tag],
+        cwd=repo_dir,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        colors.warn(f"\nRebase failed for {comp_name} ({old_tag} -> {new_tag}). Attempting to abort...")
+        print(">>> git rebase --abort")
+        subprocess.run(["git", "rebase", "--abort"], cwd=repo_dir)
+        colors.warn(
+            f"Rebase aborted for {comp_name}. Resolve conflicts manually if desired."
+        )
+        return False
+
+    colors.info(f"Rebase succeeded for {comp_name}.")
+
+    # Push with force-with-lease in sub-repository
+    remote_names = [r.name for r in repo.remotes]
+    remote_name = "una" if "una" in remote_names else ("origin" if "origin" in remote_names else None)
+    if remote_name:
+        try:
+            active_branch = repo.active_branch.name
+        except Exception:
+            active_branch = "una"
+
+        refspec = f"refs/heads/{active_branch}:refs/heads/{active_branch}"
+        print(f">>> git push --force-with-lease {remote_name} {refspec}  (in {repo_dir})")
+        try:
+            subprocess.run(
+                ["git", "push", "--force-with-lease", remote_name, refspec],
+                cwd=repo_dir,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            colors.info(f"Pushed {comp_name} to {remote_name}/{active_branch} with --force-with-lease.")
+        except Exception as e:
+            colors.warn(f"Warning: git push --force-with-lease failed for {comp_name}: {e}")
+
+    # Update .repo file
+    repo_file = _find_repo_file_with_tag(comp_name, base_dir)
+    if repo_file and repo_file.exists():
+        print(f"\nUpdating tag in {repo_file.relative_to(base_dir)}: {old_tag} -> {new_tag}")
+        text = repo_file.read_text()
+        updated = _re.sub(
+            r"(?m)^(\s*tag\s*=\s*)\S+",
+            lambda m: m.group(1) + new_tag,
+            text,
+        )
+        if updated == text:
+            colors.warn(
+                f"Warning: 'tag = {old_tag}' not found in {repo_file.name}; file not updated."
+            )
+        else:
+            repo_file.write_text(updated)
+            colors.info(f"Updated {repo_file.name}: tag = {new_tag}")
+
+            # Commit and push in top-level una repo
+            try:
+                top_repo = Repo(base_dir)
+                rel_path = str(repo_file.relative_to(base_dir))
+                print(f">>> git add {rel_path}  (in {base_dir})")
+                top_repo.git.add(rel_path)
+
+                commit_msg = f"updating tag on {comp_name} from {old_tag} to {new_tag}"
+                print(f">>> git commit -m '{commit_msg}'  (in {base_dir})")
+                top_repo.git.commit("-m", commit_msg)
+
+                top_remote_names = [r.name for r in top_repo.remotes]
+                top_remote = "una" if "una" in top_remote_names else ("origin" if "origin" in top_remote_names else None)
+                if top_remote:
+                    try:
+                        top_branch = top_repo.active_branch.name
+                    except Exception:
+                        top_branch = "una"
+                    top_refspec = f"refs/heads/{top_branch}:refs/heads/{top_branch}"
+                    print(f">>> git push {top_remote} {top_refspec}  (in {base_dir})")
+                    try:
+                        subprocess.run(
+                            ["git", "push", top_remote, top_refspec],
+                            cwd=base_dir,
+                            check=True,
+                            capture_output=True,
+                            text=True,
+                        )
+                        colors.info(f"Pushed top-level repository commit to {top_remote}/{top_branch}.")
+                    except Exception as pe:
+                        colors.warn(f"Warning: Failed to push top-level repo changes: {pe}")
+            except Exception as ce:
+                colors.warn(f"Warning: Failed to commit top-level repo changes: {ce}")
+    else:
+        colors.warn(
+            f"Warning: could not locate a .repo file with 'tag = ...' for '{comp_name}'. Tag not updated on disk."
+        )
+
+    # Show diff stat
+    print(f"\n>>> git diff {old_tag} --stat  (in {repo_dir})")
+    subprocess.run(["git", "diff", old_tag, "--stat"], cwd=repo_dir)
+
+    return True
+
+
 def rebase_to_tag(comp_name: str, new_tag: str, repos_config: list, base_dir: Path):
     """
     Rebase a component's local patches onto a new upstream tag.
-
-    Steps:
-      1. Locate the component in repos_config — it must have a 'tag' field.
-      2. Fetch tags from the remote so new_tag is available locally.
-      3. Dereference old_tag to its commit hash (annotated tags are tag objects,
-         not commits — git merge-base refuses them directly).
-      4. Find the fork-point: git merge-base --fork-point <old_tag_commit>
-         This uses the reflog to find where our branch diverged from the tag.
-      5. Rebase: git rebase --onto=<new_tag> <fork_point>
-      6. On success, update tag= in the .repo file that actually owns it
-         (following ref= chains, e.g. llvm-runtime → llvm-tools).
-      7. Show: git diff <old_tag> --stat
     """
-    import subprocess
-    import re as _re
-
-    # ── 1. Find component config ──────────────────────────────────────────────
     cfg = next((r for r in repos_config if r["name"] == comp_name), None)
     if cfg is None:
         colors.error(f"Error: component '{comp_name}' not found in configuration.")
@@ -253,10 +369,9 @@ def rebase_to_tag(comp_name: str, new_tag: str, repos_config: list, base_dir: Pa
         )
         return
 
-    print(f"\n--- Rebasing {comp_name}: {old_tag} → {new_tag} ---")
     repo = Repo(repo_dir)
 
-    # ── 2. Fetch tags from remote ─────────────────────────────────────────────
+    # Fetch tags from remote
     remote_names = [r.name for r in repo.remotes]
     if "una" in remote_names:
         print(f">>> git fetch --tags una")
@@ -264,90 +379,8 @@ def rebase_to_tag(comp_name: str, new_tag: str, repos_config: list, base_dir: Pa
     elif "origin" in remote_names:
         print(f">>> git fetch --tags origin")
         repo.remotes.origin.fetch(tags=True, progress=TqdmProgress())
-    else:
-        colors.error("Error: no 'una' or 'origin' remote found.")
-        return
 
-    # ── 3. Dereference old_tag to its commit ──────────────────────────────────
-    # Annotated tags are tag objects, not commits. git merge-base --fork-point
-    # requires a commit, so we peel the tag with ^{commit}.
-    print(f">>> git rev-parse {old_tag}^{{commit}}")
-    result = subprocess.run(
-        ["git", "rev-parse", f"{old_tag}^{{commit}}"],
-        cwd=repo_dir, capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        colors.error(f"Error: could not resolve '{old_tag}' to a commit.")
-        colors.error(result.stderr.strip())
-        return
-    old_tag_commit = result.stdout.strip()
-    print(f"    {old_tag} → {old_tag_commit}")
-
-    # ── 4. Find fork-point via reflog ─────────────────────────────────────────
-    # git merge-base --fork-point <commit> uses the reflog of the current branch
-    # to find the most recent point where it diverged from <commit>.
-    print(f">>> git merge-base --fork-point {old_tag_commit}")
-    result = subprocess.run(
-        ["git", "merge-base", "--fork-point", old_tag_commit],
-        cwd=repo_dir, capture_output=True, text=True,
-    )
-    if result.returncode != 0 or not result.stdout.strip():
-        # Fork-point not found in reflog — fall back to the tag commit itself,
-        # which rebases the full patch set onto new_tag.
-        colors.warn(
-            f"Warning: no fork-point found in reflog for {old_tag_commit}; "
-            "using the tag commit directly as upstream."
-        )
-        fork_point = old_tag_commit
-    else:
-        fork_point = result.stdout.strip()
-    print(f"    fork-point: {fork_point}")
-
-    # ── 5. Rebase: git rebase --onto=<new_tag> <fork_point> ──────────────────
-    print(f">>> git rebase --onto={new_tag} {fork_point}")
-    result = subprocess.run(
-        ["git", "rebase", f"--onto={new_tag}", fork_point],
-        cwd=repo_dir, capture_output=False,  # stream output live
-    )
-    if result.returncode != 0:
-        colors.error("\nRebase failed. Attempting to abort...")
-        print(">>> git rebase --abort")
-        subprocess.run(["git", "rebase", "--abort"], cwd=repo_dir)
-        colors.error(
-            "Rebase aborted. Resolve conflicts manually, then re-run --rebase."
-        )
-        return
-
-    colors.info("Rebase succeeded.")
-
-    # ── 6. Update tag= in the .repo file that owns it ────────────────────────
-    # Components may use ref= to inherit fields (e.g. llvm-runtime → llvm-tools).
-    # We follow the ref chain to find the .repo file that actually has tag=.
-    repo_file = _find_repo_file_with_tag(comp_name, base_dir)
-    if repo_file:
-        print(f"\nUpdating tag in {repo_file.relative_to(base_dir)}: {old_tag} → {new_tag}")
-        text = repo_file.read_text()
-        updated = _re.sub(
-            r"(?m)^(\s*tag\s*=\s*)\S+",
-            lambda m: m.group(1) + new_tag,
-            text,
-        )
-        if updated == text:
-            colors.warn(
-                f"Warning: 'tag = {old_tag}' not found in {repo_file.name}; file not updated."
-            )
-        else:
-            repo_file.write_text(updated)
-            colors.info(f"Updated {repo_file.name}: tag = {new_tag}")
-    else:
-        colors.warn(
-            f"Warning: could not locate a .repo file with 'tag = ...' for "
-            f"'{comp_name}' under {base_dir}/confs/repos/. Tag not updated on disk."
-        )
-
-    # ── 7. Show diff stat ─────────────────────────────────────────────────────
-    print(f"\n>>> git diff {old_tag} --stat")
-    subprocess.run(["git", "diff", old_tag, "--stat"], cwd=repo_dir)
+    auto_rebase_and_update_tag(comp_name, old_tag, new_tag, repo_dir, base_dir)
 
 
 def _find_repo_file_with_tag(comp_name: str, base_dir: Path) -> Path:

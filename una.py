@@ -341,7 +341,7 @@ def main():
             with open(git_log_file, "a") as f:
                 os.dup2(f.fileno(), 1)
                 os.dup2(f.fileno(), 2)
-                if sync_repo(cfg, una_base):
+                if sync_repo(cfg, una_base, BASE_DIR):
                     save_repo_state(cfg)
         finally:
             os.dup2(original_stdout_fd, 1)
@@ -349,7 +349,11 @@ def main():
             os.close(original_stdout_fd)
             os.close(original_stderr_fd)
 
-        if cfg.get("newer_tag"):
+        if cfg.get("rebased_new_tag"):
+            colors.info(
+                f"Updated '{cfg['name']}' to tag '{cfg['rebased_new_tag']}' (rebased and pushed)."
+            )
+        elif cfg.get("newer_tag"):
             colors.warn(
                 f"Notice: A newer version tag '{cfg['newer_tag']}' is available for '{cfg['name']}' (configured: '{cfg.get('tag')}')"
             )
