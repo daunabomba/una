@@ -79,6 +79,8 @@ class TqdmProgress(RemoteProgress):
         if hasattr(self, "pbar") and self.pbar is not None:
             try:
                 self.pbar.close()
+                sys.stderr.write("\r\n")
+                sys.stderr.flush()
             except Exception:
                 pass
 

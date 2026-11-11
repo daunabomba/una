@@ -148,6 +148,8 @@ class Writer:
                             return
                         lines = buf.split("\n")
                         for idx, line in enumerate(lines):
+                            if '\r' in line:
+                                line = line.split('\r')[-1]
                             y, x = self.win.getyx()
                             if line:
                                 truncated = line[:max(w - 1, 0)]
@@ -222,7 +224,8 @@ class QueueWriter:
 
     def write(self, text):
         if text:
-            self.ui.write_top(text)
+            crlf_text = re.sub(r'(?<!\r)\n', '\r\n', text)
+            self.ui.write_top(crlf_text)
         return len(text) if text else 0
 
     def flush(self):
