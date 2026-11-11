@@ -113,23 +113,27 @@ class NonBlockingPipeCapture:
                 return False
             if not chunk:
                 return False
+
+            # Ensure CR are added as well as line feeds (LF -> CRLF)
+            crlf_chunk = re.sub(b'(?<!\r)\n', b'\r\n', chunk)
+
             if self.log_fd is not None:
                 try:
-                    os.write(self.log_fd, chunk)
+                    os.write(self.log_fd, crlf_chunk)
                 except OSError:
                     pass
             self.output_buffer.append(chunk)
             if self.curses_ui:
                 try:
                     if hasattr(self.curses_ui, 'write_bottom'):
-                        self.curses_ui.write_bottom(chunk)
+                        self.curses_ui.write_bottom(crlf_chunk)
                     elif hasattr(self.curses_ui, 'top_queue'):
-                        self.curses_ui.top_queue.put(('bottom', chunk.decode('utf-8', errors='replace')))
+                        self.curses_ui.top_queue.put(('bottom', crlf_chunk.decode('utf-8', errors='replace')))
                 except Exception:
                     pass
             elif self.orig_stdout is not None:
                 try:
-                    os.write(self.orig_stdout, chunk)
+                    os.write(self.orig_stdout, crlf_chunk)
                 except OSError:
                     pass
 

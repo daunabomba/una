@@ -1,4 +1,13 @@
 import sys
+import re
+
+
+def _crlf(text):
+    """Ensure CR is added before every line feed (LF -> CRLF)."""
+    if text is None:
+        return ""
+    s = str(text)
+    return re.sub(r'(?<!\r)\n', '\r\n', s)
 
 
 def _color(text, color_code, bold=False):
@@ -14,16 +23,19 @@ def info(msg):
     # Handle leading newlines - they should be outside the brackets
     prefix = ""
     if isinstance(msg, str) and msg.startswith('\n'):
-        prefix = '\n'
+        prefix = '\r\n'
         msg = msg[1:]
-    print(_color(f"{prefix}{msg}", "92", bold=True), flush=True)
+    formatted = _crlf(f"{prefix}{msg}")
+    print(_color(formatted, "92", bold=True), end="\r\n", flush=True)
 
 
 def warn(msg):
     """Orange (Yellow) for warnings."""
-    print(_color(msg, "33", bold=True), flush=True)
+    formatted = _crlf(msg)
+    print(_color(formatted, "33", bold=True), end="\r\n", flush=True)
 
 
 def error(msg):
     """Red for errors."""
-    print(_color(msg, "91", bold=True), flush=True)
+    formatted = _crlf(msg)
+    print(_color(formatted, "91", bold=True), end="\r\n", flush=True)
