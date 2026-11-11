@@ -7,11 +7,12 @@ import json
 import os
 import queue
 import re
-
+import selectors
 import shutil
 import subprocess
 import sys
 import threading
+import time
 import contextlib
 from pathlib import Path
 
@@ -61,95 +62,151 @@ repos_to_sync_set = None
 una_base_str = None
 
 
-class AsyncLogWriter:
-    """Thread-safe async writer that forwards text to a log file and optionally
-    to a curses top_queue for display in the top pane."""
+class NonBlockingPipeCapture:
+    """Captures process stdout/stderr (fds 1 and 2) using non-blocking, unbuffered pipe I/O.
 
-    def __init__(self, logfile, write_to_top=True, top_queue=None):
-        self.logfile = logfile
-        self.write_to_top = bool(write_to_top)
-        self.top_queue = top_queue
-        self.q = queue.Queue()
-        self.thread = threading.Thread(target=self._run, daemon=True)
-        self.thread.start()
+    Streams output unbuffered to a log file on disk and optionally to CursesUI
+    (bottom pane) or original stdout without blocking or disk-polling delays.
+    """
+    def __init__(self, log_path, curses_ui=None):
+        self.log_path = log_path
+        self.curses_ui = curses_ui
+        self.pipe_read = None
+        self.pipe_write = None
+        self.orig_stdout = None
+        self.orig_stderr = None
+        self.log_fd = None
+        self.reader_thread = None
+        self.stop_event = threading.Event()
+        self.output_buffer = []
 
-    def _run(self):
+    def __enter__(self):
+        if self.log_path:
+            os.makedirs(os.path.dirname(os.path.abspath(str(self.log_path))), exist_ok=True)
+            self.log_fd = os.open(
+                str(self.log_path),
+                os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NONBLOCK,
+                0o644
+            )
+        self.pipe_read, self.pipe_write = os.pipe()
+        os.set_blocking(self.pipe_read, False)
+        os.set_inheritable(self.pipe_read, False)
+        os.set_inheritable(self.pipe_write, True)
+        self.orig_stdout = os.dup(1)
+        self.orig_stderr = os.dup(2)
+        os.dup2(self.pipe_write, 1)
+        os.dup2(self.pipe_write, 2)
+        os.close(self.pipe_write)
+        self.pipe_write = None
+
+        self.reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
+        self.reader_thread.start()
+        return self
+
+    def _drain(self):
         while True:
             try:
-                item = self.q.get()
-            except Exception:
-                continue
-            if item is None:
-                break
-            text = item
-            if isinstance(text, str):
-                text = text.replace('\r', '')
-            try:
-                if hasattr(self.logfile, 'write'):
-                    clean_text = strip_ansi_codes(text)
-                    self.logfile.write(clean_text)
-                    try:
-                        self.logfile.flush()
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-            if self.write_to_top and self.top_queue is not None:
+                chunk = os.read(self.pipe_read, 32768)
+            except (BlockingIOError, InterruptedError):
+                return True
+            except OSError:
+                return False
+            if not chunk:
+                return False
+            if self.log_fd is not None:
                 try:
-                    self.top_queue.put(text)
+                    os.write(self.log_fd, chunk)
+                except OSError:
+                    pass
+            self.output_buffer.append(chunk)
+            if self.curses_ui:
+                try:
+                    if hasattr(self.curses_ui, 'write_bottom'):
+                        self.curses_ui.write_bottom(chunk)
+                    elif hasattr(self.curses_ui, 'top_queue'):
+                        self.curses_ui.top_queue.put(('bottom', chunk.decode('utf-8', errors='replace')))
                 except Exception:
                     pass
+            elif self.orig_stdout is not None:
+                try:
+                    os.write(self.orig_stdout, chunk)
+                except OSError:
+                    pass
+
+    def _reader_loop(self):
+        sel = selectors.DefaultSelector()
+        sel.register(self.pipe_read, selectors.EVENT_READ)
+        try:
+            while not self.stop_event.is_set():
+                events = sel.select(timeout=0.05)
+                if events:
+                    if not self._drain():
+                        return
+        finally:
+            sel.close()
+            deadline = time.monotonic() + 1.0
+            while self._drain() and time.monotonic() < deadline:
+                time.sleep(0.005)
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            os.dup2(self.orig_stdout, 1)
+            os.dup2(self.orig_stderr, 2)
+        except OSError:
+            pass
+        if self.orig_stdout is not None:
             try:
-                self.q.task_done()
-            except Exception:
+                os.close(self.orig_stdout)
+            except OSError:
                 pass
-        try:
-            if hasattr(self.logfile, 'flush'):
-                self.logfile.flush()
-        except Exception:
-            pass
+            self.orig_stdout = None
+        if self.orig_stderr is not None:
+            try:
+                os.close(self.orig_stderr)
+            except OSError:
+                pass
+            self.orig_stderr = None
 
+        self.stop_event.set()
+        if self.reader_thread is not None:
+            self.reader_thread.join(timeout=3.0)
+            self.reader_thread = None
+
+        if self.pipe_read is not None:
+            try:
+                os.close(self.pipe_read)
+            except OSError:
+                pass
+            self.pipe_read = None
+
+        if self.log_fd is not None:
+            try:
+                os.close(self.log_fd)
+            except OSError:
+                pass
+            self.log_fd = None
+
+
+class AsyncLogWriter:
+    """Deprecated: retained for compatibility."""
+    def __init__(self, logfile=None, write_to_top=True, top_queue=None):
+        pass
     def put(self, txt):
-        try:
-            self.q.put(txt)
-        except Exception:
-            pass
-
+        pass
     def flush(self):
-        try:
-            self.q.join()
-        except Exception:
-            pass
-
+        pass
     def stop(self):
-        try:
-            self.q.put(None)
-            self.thread.join(timeout=5)
-        except Exception:
-            pass
+        pass
 
 
 class StdoutReplacer:
-    """File-like wrapper that funnels writes through an AsyncLogWriter."""
-
-    def __init__(self, aw):
+    """Deprecated: retained for compatibility."""
+    def __init__(self, aw=None):
         self.aw = aw
-
     def write(self, txt):
-        try:
-            if isinstance(txt, str):
-                txt = txt.replace('\r', '')
-            self.aw.put(txt)
-        except Exception:
-            pass
-        return len(txt)
-
+        return len(txt) if txt else 0
     def flush(self):
-        try:
-            self.aw.flush()
-        except Exception:
-            pass
-
+        pass
     def isatty(self):
         return False
 
@@ -167,6 +224,7 @@ def get_build_env(staging_dir=None):
     env = os.environ.copy()
     tools_bin = Path.cwd() / "bld" / "tools" / "bin"
     env["PATH"] = f"{tools_bin}:{env.get('PATH', '')}"
+    env["PYTHONUNBUFFERED"] = "1"
     
     if staging_dir:
         env["PKG_CONFIG_PATH"] = f"{staging_dir}/usr/lib/pkgconfig"
@@ -222,12 +280,17 @@ class SubprocessRunner:
             colors.info(f"Executing in: {cwd}")
         colors.info(f"{env_display} {cmd_display}")
 
-        # Execute subprocess with stdin closed to avoid inheriting terminal input
+        # Execute subprocess with stdin closed and unbuffered I/O
         if 'stdin' not in kwargs:
             kwargs['stdin'] = subprocess.DEVNULL
-        return subprocess.run(cmd, cwd=cwd, env=env, check=check, shell=shell, **kwargs)
+        if env is not None:
+            run_env = env.copy()
+        else:
+            run_env = os.environ.copy()
+        run_env.setdefault("PYTHONUNBUFFERED", "1")
+        return subprocess.run(cmd, cwd=cwd, env=run_env, check=check, shell=shell, **kwargs)
     
-    def _log_to_trace(self, cmd, env_display, cmd_display):
+    def _log_to_trace(self, cwd, env_display, cmd_display):
         """Log command details to trace file."""
         try:
             with open(self.trace_file, "a") as f:
@@ -237,7 +300,7 @@ class SubprocessRunner:
                 if cwd:
                     f.write(f"WorkDir: {cwd}\n")
                 
-                if env:
+                if env_display:
                     f.write("Environment:\n")
                     f.write(f"{env_display}\n")
                 
@@ -401,239 +464,15 @@ class StepRunner:
                 except Exception:
                     pass
 
-        original_stdout_fd = os.dup(1)
-        original_stderr_fd = os.dup(2)
-        old_sys_stdout = sys.stdout
-        old_sys_stderr = sys.stderr
-
         trace_file_open(str(log_file_path), "a")
         try:
-            log_file = open(log_file_path, "a")
+            with NonBlockingPipeCapture(log_file_path, curses_ui=self.curses_ui if self.use_pipe_capture else None):
+                step_func(self.staging_dir, self.target_dir, **kwargs)
         except Exception as e:
-            trace_exception(f"open({log_file_path})", e)
+            trace_exception(f"step_func({name}::{step_name})", e)
             raise
-
-        original_stdout_is_tty = old_sys_stdout.isatty() if hasattr(old_sys_stdout, 'isatty') else False
-        use_pipe_capture = self.use_pipe_capture and not original_stdout_is_tty
-
-        pipe_read, pipe_write = None, None
-        async_top_writer = None
-        async_file_writer = None
-        pipe_read_fd = None
-        pipe_write_fd = None
-        tee_thread = None
-
-        if use_pipe_capture:
-            pipe_read, pipe_write = os.pipe()
-            try:
-                os.set_inheritable(pipe_read, False)
-            except Exception:
-                pass
-            try:
-                os.set_inheritable(pipe_write, False)
-            except Exception:
-                pass
-
-            os.dup2(pipe_write, 1)
-            os.dup2(pipe_write, 2)
-            try:
-                os.set_inheritable(1, True)
-                os.set_inheritable(2, True)
-            except Exception:
-                pass
-            try:
-                os.close(pipe_write)
-            except Exception:
-                pass
-
-            try:
-                try:
-                    fds = sorted(os.listdir('/proc/self/fd'))
-                except Exception:
-                    fds = []
-                if hasattr(log_file, 'write'):
-                    try:
-                        log_file.write(f"DEBUG_FDS_AFTER_DUP: {fds}\n")
-                        log_file.flush()
-                        try:
-                            os.fsync(log_file.fileno())
-                        except Exception:
-                            pass
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-
-            try:
-                top_q = self.curses_ui.top_queue if self.curses_ui else None
-                async_top_writer = AsyncLogWriter(log_file, write_to_top=True, top_queue=top_q)
-                async_file_writer = AsyncLogWriter(log_file, write_to_top=False, top_queue=None)
-
-                sys.stdout = StdoutReplacer(async_top_writer)
-                sys.stderr = sys.stdout
-            except Exception:
-                pass
-
-        output_buffer = []
-        buffer_lock = threading.Lock()
-        stop_event = threading.Event()
-        reader = None
-
-        if use_pipe_capture and pipe_read is not None:
-            def reader_thread():
-                try:
-                    while True:
-                        try:
-                            data = os.read(pipe_read, 4096)
-                        except (OSError, IOError):
-                            break
-                        if not data:
-                            break
-                        text = data.decode('utf-8', errors='replace')
-                        try:
-                            if async_top_writer:
-                                async_top_writer.put(text)
-                        except Exception:
-                            pass
-                        with buffer_lock:
-                            output_buffer.append(data)
-                finally:
-                    try:
-                        while True:
-                            data = os.read(pipe_read, 4096)
-                            if not data:
-                                break
-                            text = data.decode('utf-8', errors='replace')
-                            try:
-                                if async_top_writer:
-                                    async_top_writer.put(text)
-                            except Exception:
-                                pass
-                            with buffer_lock:
-                                output_buffer.append(data)
-                    except Exception:
-                        pass
-
-            reader = threading.Thread(target=reader_thread, daemon=False)
-            reader.start()
-        else:
-            pipe_read_fd, pipe_write_fd = os.pipe()
-            try:
-                os.set_inheritable(pipe_read_fd, False)
-            except Exception:
-                pass
-            try:
-                os.set_inheritable(pipe_write_fd, False)
-            except Exception:
-                pass
-            os.dup2(pipe_write_fd, 1)
-            os.dup2(pipe_write_fd, 2)
-            try:
-                os.set_inheritable(1, True)
-                os.set_inheritable(2, True)
-            except Exception:
-                pass
-            try:
-                os.close(pipe_write_fd)
-            except Exception:
-                pass
-
-            def _tee_thread():
-                try:
-                    while True:
-                        data = os.read(pipe_read_fd, 4096)
-                        if not data:
-                            break
-                        os.write(original_stdout_fd, data)
-                        log_file.write(data.decode(errors="replace"))
-                        log_file.flush()
-                except Exception:
-                    pass
-
-            tee_thread = threading.Thread(target=_tee_thread, daemon=True)
-            tee_thread.start()
-
-        try:
-            step_func(self.staging_dir, self.target_dir, **kwargs)
         finally:
-            if use_pipe_capture:
-                stop_event.set()
-                try:
-                    os.close(pipe_write)
-                except Exception:
-                    pass
-                try:
-                    os.dup2(original_stdout_fd, 1)
-                    os.dup2(original_stderr_fd, 2)
-                except Exception:
-                    pass
-                if reader:
-                    try:
-                        reader.join()
-                    except Exception:
-                        pass
-            else:
-                try:
-                    if pipe_write_fd is not None:
-                        os.close(pipe_write_fd)
-                except Exception:
-                    pass
-                try:
-                    if tee_thread is not None:
-                        tee_thread.join(timeout=2)
-                except Exception:
-                    pass
-
-            try:
-                os.dup2(original_stdout_fd, 1)
-                os.dup2(original_stderr_fd, 2)
-            except Exception:
-                pass
-
-            try:
-                if 'old_sys_stdout' in locals() and old_sys_stdout is not None:
-                    sys.stdout = old_sys_stdout
-                if 'old_sys_stderr' in locals() and old_sys_stderr is not None:
-                    sys.stderr = old_sys_stderr
-            except Exception:
-                pass
-
-            try:
-                os.close(original_stdout_fd)
-            except Exception:
-                pass
-            try:
-                os.close(original_stderr_fd)
-            except Exception:
-                pass
-            if use_pipe_capture:
-                if pipe_read is not None:
-                    try:
-                        os.close(pipe_read)
-                    except Exception:
-                        pass
-                if pipe_write is not None:
-                    try:
-                        os.close(pipe_write)
-                    except Exception:
-                        pass
-            if async_top_writer:
-                try:
-                    async_top_writer.stop()
-                except Exception:
-                    pass
-            if async_file_writer:
-                try:
-                    async_file_writer.stop()
-                except Exception:
-                    pass
-
-            try:
-                trace_file_close(str(log_file_path))
-                log_file.close()
-            except Exception as e:
-                trace_exception(f"close({log_file_path})", e)
-                pass
+            trace_file_close(str(log_file_path))
 
         pre = self.component_snapshots[name]
         post_staging = take_snapshot(self.staging_dir)
@@ -717,19 +556,9 @@ def _run_sync_phase():
         from mods.git_ops import sync_repo
         from mods.config import save_repo_state
 
-        original_stdout_fd = os.dup(1)
-        original_stderr_fd = os.dup(2)
-        try:
-            with open(git_log_file, "w") as f:
-                os.dup2(f.fileno(), 1)
-                os.dup2(f.fileno(), 2)
-                if sync_repo(cfg, una_base_str, BASE_DIR):
-                    save_repo_state(cfg)
-        finally:
-            os.dup2(original_stdout_fd, 1)
-            os.dup2(original_stderr_fd, 2)
-            os.close(original_stdout_fd)
-            os.close(original_stderr_fd)
+        with NonBlockingPipeCapture(git_log_file, curses_ui=curses_ui if use_curses else None):
+            if sync_repo(cfg, una_base_str, BASE_DIR):
+                save_repo_state(cfg)
 
         if cfg.get("rebased_new_tag"):
             colors.info(
@@ -855,156 +684,13 @@ def run_build(args):
             if curses_ui and hasattr(curses_ui, 'set_current_log'):
                 curses_ui.set_current_log(str(log_file_path))
             
-            original_stdout_fd = os.dup(1)
-            original_stderr_fd = os.dup(2)
-            old_sys_stdout = sys.stdout
-            old_sys_stderr = sys.stderr
-            
-            try:
-                pipe_read = None
-                pipe_write = None
-                reader = None
-                async_writer = None
-                tee_thread = None
-                log_file = open(log_file_path, "a")
-
-                if use_curses and hasattr(old_sys_stdout, 'write'):
-                    pipe_read, pipe_write = os.pipe()
-                    try:
-                        os.set_inheritable(pipe_read, False)
-                    except Exception:
-                        pass
-                    try:
-                        os.set_inheritable(pipe_write, False)
-                    except Exception:
-                        pass
-                    os.dup2(pipe_write, 1)
-                    os.dup2(pipe_write, 2)
-                    try:
-                        os.set_inheritable(1, True)
-                        os.set_inheritable(2, True)
-                    except Exception:
-                        pass
-                    try:
-                        os.close(pipe_write)
-                    except Exception:
-                        pass
-                    pipe_write = None  # prevent double-close in finally
-
-                    top_q = curses_ui.top_queue if curses_ui else None
-                    async_writer = AsyncLogWriter(log_file, write_to_top=True, top_queue=top_q)
-
-                    sys.stdout = StdoutReplacer(async_writer)
-                    sys.stderr = sys.stdout
-
-                    def reader_thread():
-                        while True:
-                            try:
-                                data = os.read(pipe_read, 4096)
-                                if not data:
-                                    break
-                                async_writer.put(data.decode('utf-8', errors='replace'))
-                            except Exception:
-                                break
-
-                    reader = threading.Thread(target=reader_thread, daemon=True)
-                    reader.start()
-
-                    if hasattr(module, "tools_configure"):
-                        module.tools_configure(tools_install_dir, arches=get_all_arches())
-                    if hasattr(module, "tools_build"):
-                        module.tools_build(tools_install_dir)
-                    if hasattr(module, "tools_install"):
-                        module.tools_install(tools_install_dir)
-
-                    if reader:
-                        reader.join(timeout=2)
-                    # Restore stdout BEFORE stopping async_writer so any
-                    # deferred prints go to the real Writer, not a dead queue.
-                    sys.stdout = old_sys_stdout
-                    sys.stderr = old_sys_stderr
-                    if async_writer:
-                        async_writer.stop()
-                else:
-                    pipe_read, pipe_write = os.pipe()
-                    try:
-                        os.set_inheritable(pipe_read, False)
-                    except Exception:
-                        pass
-                    try:
-                        os.set_inheritable(pipe_write, False)
-                    except Exception:
-                        pass
-                    os.dup2(pipe_write, 1)
-                    os.dup2(pipe_write, 2)
-                    try:
-                        os.set_inheritable(1, True)
-                        os.set_inheritable(2, True)
-                    except Exception:
-                        pass
-                    try:
-                        os.close(pipe_write)
-                    except Exception:
-                        pass
-
-                    def _tee_thread():
-                        try:
-                            while True:
-                                data = os.read(pipe_read, 4096)
-                                if not data:
-                                    break
-                                os.write(original_stdout_fd, data)
-                                log_file.write(data.decode(errors="replace"))
-                                log_file.flush()
-                        except Exception:
-                            pass
-
-                    tee_thread = threading.Thread(target=_tee_thread, daemon=True)
-                    tee_thread.start()
-                    if hasattr(module, "tools_configure"):
-                        module.tools_configure(tools_install_dir, arches=get_all_arches())
-                    if hasattr(module, "tools_build"):
-                        module.tools_build(tools_install_dir)
-                    if hasattr(module, "tools_install"):
-                        module.tools_install(tools_install_dir)
-            finally:
-                # Restore file descriptors
-                try:
-                    os.dup2(original_stdout_fd, 1)
-                    os.dup2(original_stderr_fd, 2)
-                except Exception:
-                    pass
-                try:
-                    os.close(original_stdout_fd)
-                except Exception:
-                    pass
-                try:
-                    os.close(original_stderr_fd)
-                except Exception:
-                    pass
-                # Restore Python stdout/stderr BEFORE stopping async_writer
-                # so any final prints go to the real Writer, not a dead queue.
-                sys.stdout = old_sys_stdout
-                sys.stderr = old_sys_stderr
-                if pipe_read is not None:
-                    try:
-                        os.close(pipe_read)
-                    except Exception:
-                        pass
-                if async_writer is not None:
-                    try:
-                        async_writer.stop()
-                    except Exception:
-                        pass
-                if not use_curses and tee_thread is not None:
-                    try:
-                        tee_thread.join(timeout=5)
-                    except Exception:
-                        pass
-                try:
-                    log_file.close()
-                except Exception:
-                    pass
+            with NonBlockingPipeCapture(log_file_path, curses_ui=curses_ui if use_curses else None):
+                if hasattr(module, "tools_configure"):
+                    module.tools_configure(tools_install_dir, arches=get_all_arches())
+                if hasattr(module, "tools_build"):
+                    module.tools_build(tools_install_dir)
+                if hasattr(module, "tools_install"):
+                    module.tools_install(tools_install_dir)
         
         if is_enabled():
             tools_step_end("tools_configure")

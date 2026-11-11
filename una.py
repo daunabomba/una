@@ -18,6 +18,7 @@ from mods.build import (
     propagate_skel,
     init_build,
     run_build,
+    NonBlockingPipeCapture,
 )
 from mods.config import (
     set_base_dir,
@@ -334,20 +335,10 @@ def main():
             continue
 
         git_log_file = git_logs_dir / f"{cfg['name']}_git_pre.txt"
-        original_stdout_fd = os.dup(1)
-        original_stderr_fd = os.dup(2)
-        try:
-            colors.info(f">>> Syncing repo: {cfg['name']} (output -> {git_log_file})")
-            with open(git_log_file, "a") as f:
-                os.dup2(f.fileno(), 1)
-                os.dup2(f.fileno(), 2)
-                if sync_repo(cfg, una_base, BASE_DIR):
-                    save_repo_state(cfg)
-        finally:
-            os.dup2(original_stdout_fd, 1)
-            os.dup2(original_stderr_fd, 2)
-            os.close(original_stdout_fd)
-            os.close(original_stderr_fd)
+        colors.info(f">>> Syncing repo: {cfg['name']} (output -> {git_log_file})")
+        with NonBlockingPipeCapture(git_log_file):
+            if sync_repo(cfg, una_base, BASE_DIR):
+                save_repo_state(cfg)
 
         if cfg.get("rebased_new_tag"):
             colors.info(
